@@ -37,7 +37,10 @@ def test_mix_suggest_endpoint_returns_candidates() -> None:
     app = create_app(MixingService(track_signal_provider=_signal_provider))
     client = TestClient(app)
 
-    response = client.post("/v1/mix/suggest", json={"track_id": "t1", "profile": "clean"})
+    response = client.post(
+        "/v1/mix/suggest",
+        json={"track_id": "t1", "profile": "clean", "suggestion_engine": "rule-based"},
+    )
     body = response.json()
 
     assert response.status_code == 200
@@ -47,6 +50,15 @@ def test_mix_suggest_endpoint_returns_candidates() -> None:
     assert "param_updates" in candidate
     assert "variant" in candidate
     assert "score" in candidate
+
+
+def test_mix_suggest_accepts_llm_engine_field_with_fallback() -> None:
+    app = create_app(MixingService(track_signal_provider=_signal_provider, suggestion_mode="llm-based"))
+    client = TestClient(app)
+
+    response = client.post("/v1/mix/suggest", json={"track_id": "t1", "profile": "clean", "suggestion_engine": "llm-based"})
+    assert response.status_code == 200
+    assert response.json()["candidates"]
 
 
 def test_mix_suggest_can_use_existing_analysis_id() -> None:
@@ -69,4 +81,12 @@ def test_mix_suggest_rejects_invalid_profile() -> None:
     client = TestClient(app)
 
     response = client.post("/v1/mix/suggest", json={"track_id": "t1", "profile": "invalid"})
+    assert response.status_code == 422
+
+
+def test_mix_suggest_rejects_invalid_suggestion_engine() -> None:
+    app = create_app(MixingService(track_signal_provider=_signal_provider))
+    client = TestClient(app)
+
+    response = client.post("/v1/mix/suggest", json={"track_id": "t1", "profile": "clean", "suggestion_engine": "x"})
     assert response.status_code == 422

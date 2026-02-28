@@ -21,6 +21,7 @@ class SuggestRequest(BaseModel):
     profile: Literal["clean", "punch", "warm"] = "clean"
     analysis_id: str | None = None
     mode: Literal["quick", "full"] = "quick"
+    suggestion_engine: Literal["rule-based", "llm-based"] | None = None
 
 
 class SuggestionCandidate(BaseModel):

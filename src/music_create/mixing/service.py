@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from concurrent.futures import Future
 from typing import Callable
 from uuid import uuid4
@@ -17,8 +18,14 @@ from music_create.mixing.models import (
     MixProfile,
     Suggestion,
     SuggestionCommand,
+    TrackFeatures,
 )
-from music_create.mixing.suggestions import suggest_from_features
+from music_create.mixing.suggestion_engine import (
+    LLMSuggestionEngine,
+    RuleBasedSuggestionEngine,
+    SuggestionEngineMode,
+    normalize_suggestion_engine,
+)
 
 TrackSignalProvider = Callable[[str], list[float]]
 
@@ -29,10 +36,23 @@ class MixingService:
         mixer_graph: MixerGraph | None = None,
         capability_registry: FXCapabilityRegistry | None = None,
         track_signal_provider: TrackSignalProvider | None = None,
+        suggestion_mode: str | None = None,
+        llm_suggestion_engine: LLMSuggestionEngine | None = None,
+        fallback_to_rule_on_llm_error: bool = True,
     ) -> None:
         self._mixer_graph = mixer_graph or MixerGraph()
         self._capability_registry = capability_registry or FXCapabilityRegistry(builtin_only=True)
         self._track_signal_provider = track_signal_provider or (lambda _track_id: [0.0] * 2048)
+        env_mode = os.getenv("MUSIC_CREATE_SUGGESTION_ENGINE")
+        try:
+            self._suggestion_mode = normalize_suggestion_engine(suggestion_mode or env_mode)
+        except ValueError:
+            self._suggestion_mode = "rule-based"
+        self._rule_suggester = RuleBasedSuggestionEngine()
+        self._llm_suggester = llm_suggestion_engine or LLMSuggestionEngine.from_env()
+        self._fallback_to_rule_on_llm_error = fallback_to_rule_on_llm_error
+        self._last_suggestion_source: str = self._suggestion_mode
+        self._last_suggestion_fallback_reason: str | None = None
 
         self._analysis_jobs: dict[str, Future[AnalysisSnapshot]] = {}
         self._analysis_results: dict[str, AnalysisSnapshot] = {}
@@ -74,6 +94,7 @@ class MixingService:
         profile: MixProfile,
         analysis_id: str | None = None,
         mode: AnalysisMode = AnalysisMode.QUICK,
+        engine_mode: str | None = None,
     ) -> list[Suggestion]:
         if profile not in {"clean", "punch", "warm"}:
             raise ValueError(f"Unsupported profile '{profile}'")
@@ -87,7 +108,13 @@ class MixingService:
                 raise KeyError(f"Track '{track_id}' is not included in analysis '{analysis_id}'")
         features = snapshot.track_features[track_id]
 
-        suggestions = suggest_from_features(track_id, profile, features)
+        target_mode = normalize_suggestion_engine(engine_mode or self._suggestion_mode)
+        suggestions = self._generate_suggestions(
+            mode=target_mode,
+            track_id=track_id,
+            profile=profile,
+            features=features,
+        )
         for suggestion in suggestions:
             self._suggestions[suggestion.suggestion_id] = suggestion
         return suggestions
@@ -157,6 +184,18 @@ class MixingService:
         track = self._mixer_graph.ensure_track(track_id)
         return _clone_track_state(track)
 
+    def set_suggestion_mode(self, mode: str) -> None:
+        self._suggestion_mode = normalize_suggestion_engine(mode)
+
+    def get_suggestion_mode(self) -> SuggestionEngineMode:
+        return self._suggestion_mode
+
+    def get_last_suggestion_source(self) -> str:
+        return self._last_suggestion_source
+
+    def get_last_suggestion_fallback_reason(self) -> str | None:
+        return self._last_suggestion_fallback_reason
+
     def _require_builtin_only(self) -> None:
         if not self._capability_registry.builtin_only:
             raise RuntimeError("Current configuration allows external FX; builtin-only guard expected")
@@ -170,6 +209,33 @@ class MixingService:
                 f"Suggestion '{suggestion_id}' belongs to track '{suggestion.track_id}', not '{track_id}'"
             )
         return suggestion
+
+    def _generate_suggestions(
+        self,
+        mode: SuggestionEngineMode,
+        track_id: str,
+        profile: MixProfile,
+        features: TrackFeatures,
+    ) -> list[Suggestion]:
+        self._last_suggestion_fallback_reason = None
+        if mode == "rule-based":
+            self._last_suggestion_source = "rule-based"
+            return self._rule_suggester.generate(track_id=track_id, profile=profile, features=features)
+
+        try:
+            suggestions = self._llm_suggester.generate(track_id=track_id, profile=profile, features=features)
+            self._last_suggestion_source = "llm-based"
+            return suggestions
+        except Exception as exc:
+            if not self._fallback_to_rule_on_llm_error:
+                raise
+            fallback_reason = _format_fallback_reason(exc)
+            self._last_suggestion_source = "rule-based-fallback"
+            self._last_suggestion_fallback_reason = fallback_reason
+            suggestions = self._rule_suggester.generate(track_id=track_id, profile=profile, features=features)
+            for suggestion in suggestions:
+                suggestion.reason = f"{suggestion.reason} | fallback={fallback_reason}"
+            return suggestions
 
 
 def _apply_param_updates(
@@ -203,3 +269,12 @@ def _clone_track_state(track: MixerTrackState) -> MixerTrackState:
             for send in track.sends
         ],
     )
+
+
+def _format_fallback_reason(exc: Exception) -> str:
+    text = str(exc).strip().replace("\n", " ")
+    if not text:
+        return "llm_error"
+    if len(text) > 120:
+        return text[:117] + "..."
+    return text

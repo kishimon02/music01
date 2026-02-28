@@ -3,7 +3,7 @@
 ## 1. 目的
 
 MVPを維持しつつ、後続のトラック単位ミキシング自動化を安全に追加するための実装仕様を定義する。  
-現在は、実波形入力・提案UI・タイムライン統合・C++音声コア再生まで実装している。
+現在は、実波形入力・提案UI・タイムライン統合・C++音声コア再生に加え、プレイヘッド同期・波形表示・提案エンジン切替まで実装している。
 
 ## 2. フェーズ構成
 
@@ -13,6 +13,7 @@ MVPを維持しつつ、後続のトラック単位ミキシング自動化を�
 4. Phase D: タイムライン統合UI（トラックレーン、クリップ配置、プレイヘッド）
 5. Phase E: 実波形入力 + C++音声コア再生
 6. Phase F: 音声バックエンド抽象化（`auto` / `winmm` / `juce`）
+7. Phase G: 実再生プレイヘッド同期 + 波形表示 + 提案エンジン切替（rule/LLM）
 
 ## 3. 技術構成
 
@@ -95,12 +96,15 @@ Mixing.suggest(
     profile:Literal["clean","punch","warm"],
     analysis_id:str|None=None,
     mode:Literal["quick","full"]="quick",
+    engine_mode:Literal["rule-based","llm-based"]|None=None,
 ) -> list[Suggestion]
 Mixing.preview(track_id:str, suggestion_id:str, dry_wet:float=1.0) -> None
 Mixing.cancel_preview(track_id:str) -> None
 Mixing.apply(track_id:str, suggestion_id:str) -> command_id
 Mixing.revert(command_id:str) -> None
 Mixing.get_command_history(track_id:str|None=None) -> list[SuggestionCommand]
+Mixing.set_suggestion_mode(mode:Literal["rule-based","llm-based"]) -> None
+Mixing.get_suggestion_mode() -> Literal["rule-based","llm-based"]
 ```
 
 ### 5.2 API契約
@@ -109,6 +113,8 @@ Mixing.get_command_history(track_id:str|None=None) -> list[SuggestionCommand]
 POST /v1/mix/analyze
 POST /v1/mix/suggest
 ```
+
+`POST /v1/mix/suggest` は任意で `suggestion_engine`（`rule-based` / `llm-based`）を受け付ける。
 
 ## 6. UI仕様
 
@@ -129,13 +135,24 @@ POST /v1/mix/suggest
 2. 小節グリッド表示（横軸）
 3. MIDI/オーディオクリップ表示（色分け）
 4. 再生位置スライダー（プレイヘッド）
-5. トラック追加、MIDIクリップ追加、オーディオクリップ追加
+5. 実オーディオ再生中のプレイヘッド同期更新（実時間）
+6. トラック追加、MIDIクリップ追加、オーディオクリップ追加
 
 ### 6.3 実波形・再生UI（Phase E）
 
 1. `WAV読込` でトラックにWAVを割り当て
 2. `再生` / `停止` でC++音声コア再生制御
 3. 読込WAVを解析対象へ自動切替
+4. 波形表示コンポーネントでトラック波形を表示
+5. 波形上のプレイヘッドカーソルをタイムラインと同期表示
+
+### 6.4 提案エンジン切替（Phase G）
+
+1. 提案生成器は `rule-based` / `llm-based` を切替可能
+2. 初期既定は `rule-based`
+3. UI設定または機能フラグ（環境変数）で `llm-based` を有効化
+4. `llm-based` 失敗時は `rule-based` に自動フォールバック
+5. `Analyze -> 提案表示 -> 手動適用` の運用原則を維持し、自動適用は行わない
 
 ## 7. テスト方針
 
@@ -147,16 +164,15 @@ POST /v1/mix/suggest
 6. Timelineモデルテスト
 7. WAV読込・トラック紐付けテスト
 8. ネイティブエンジンDLLのビルド/ロードテスト
+9. `llm-based` 成功時の提案生成テスト
+10. `llm-based` 失敗時の `rule-based` フォールバックテスト
+11. 波形表示用エンベロープ生成テスト
 
 ## 8. 次フェーズ
 
 1. `juce` プレースホルダーをJUCE本実装へ置換（C API契約は維持）
-2. 実オーディオ再生中のプレイヘッド同期
-3. 波形表示コンポーネント実装
-4. 提案生成器を `rule-based` / `LLM-based` で切替可能にする（Phase F）
-5. 初期既定は `rule-based` のまま維持し、設定または機能フラグで `LLM-based` を有効化する
-6. `LLM-based` 失敗時は自動で `rule-based` にフォールバックし、提案生成を継続する
-7. `Analyze -> 提案表示 -> 手動適用` の運用原則はLLM導入後も維持し、自動適用は行わない
+2. LLM提案の品質改善（プロンプト最適化、制約強化、説明文品質）
+3. macOS向けビルド/配布対応は最終フェーズとして実施する
 
 ## 9. 言語ポリシー
 

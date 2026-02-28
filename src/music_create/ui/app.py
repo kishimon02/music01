@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import sys
 import tempfile
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -15,9 +16,10 @@ from music_create.mixing import Mixing
 from music_create.mixing.models import Suggestion, SuggestionCommand
 from music_create.mixing.service import MixingService
 from music_create.ui.timeline import TimelineClip, TimelineState
+from music_create.ui.waveform import WaveformView
 
 try:
-    from PySide6.QtCore import Qt
+    from PySide6.QtCore import QTimer, Qt
     from PySide6.QtGui import QColor
     from PySide6.QtWidgets import (
         QApplication,
@@ -42,6 +44,7 @@ try:
         QWidget,
     )
 except ImportError:  # pragma: no cover - runtime-only path
+    QTimer = object  # type: ignore[assignment]
     QApplication = None  # type: ignore[assignment]
     QFileDialog = object  # type: ignore[assignment]
     QComboBox = object  # type: ignore[assignment]
@@ -110,6 +113,17 @@ class IntegratedWindow(QMainWindow):
         self._init_default_timeline()
         self._preview_render_dir = Path(tempfile.gettempdir()) / "music_create" / "preview_wav"
         self._preview_render_dir.mkdir(parents=True, exist_ok=True)
+        self._tempo_bpm = 120.0
+        self._beats_per_bar = 4.0
+        self._playback_track_id: str | None = None
+        self._playback_started_at: float | None = None
+        self._playback_duration_sec = 0.0
+        self._playback_elapsed_sec = 0.0
+        self._playback_timer: QTimer | None = None
+        if QTimer is not object:
+            self._playback_timer = QTimer(self)
+            self._playback_timer.setInterval(33)
+            self._playback_timer.timeout.connect(self._on_playback_tick)
 
         self._build_ui()
         self._sync_track_controls_from_timeline()
@@ -158,11 +172,17 @@ class IntegratedWindow(QMainWindow):
         self.profile_combo.addItem("クリーン", "clean")
         self.profile_combo.addItem("パンチ", "punch")
         self.profile_combo.addItem("ウォーム", "warm")
+        self.suggestion_engine_combo = QComboBox()
+        self.suggestion_engine_combo.addItem("ルールベース", "rule-based")
+        self.suggestion_engine_combo.addItem("LLMベース", "llm-based")
+        current_engine = self._mixing.get_suggestion_mode()
+        self.suggestion_engine_combo.setCurrentIndex(0 if current_engine == "rule-based" else 1)
         self.mode_combo = QComboBox()
         self.mode_combo.addItem("高速（quick）", "quick")
         self.mode_combo.addItem("詳細（full）", "full")
         form.addRow("トラックID", self.track_input)
         form.addRow("プロファイル", self.profile_combo)
+        form.addRow("提案エンジン", self.suggestion_engine_combo)
         form.addRow("解析モード", self.mode_combo)
         layout.addLayout(form)
 
@@ -215,6 +235,7 @@ class IntegratedWindow(QMainWindow):
         self.apply_button.clicked.connect(self._on_apply)
         self.revert_button.clicked.connect(self._on_revert)
         self.dry_wet_slider.valueChanged.connect(self._on_dry_wet_changed)
+        self.suggestion_engine_combo.currentIndexChanged.connect(self._on_suggestion_engine_changed)
         return box
 
     def _build_timeline_panel(self) -> QGroupBox:
@@ -230,6 +251,9 @@ class IntegratedWindow(QMainWindow):
         transport_row.addWidget(self.playhead_label)
         transport_row.addWidget(self.playhead_slider, 1)
         layout.addLayout(transport_row)
+
+        self.waveform_view = WaveformView()
+        layout.addWidget(self.waveform_view)
 
         clip_action_row = QHBoxLayout()
         self.add_track_button = QPushButton("トラック追加")
@@ -326,14 +350,66 @@ class IntegratedWindow(QMainWindow):
         bar = int(round(self._timeline.playhead_bar))
         bar = min(max(bar, 1), self._timeline.bars)
         self.playhead_label.setText(f"再生位置: {self._timeline.playhead_bar:.2f} 小節")
+        self.timeline_table.clearSelection()
         for row in range(self.timeline_table.rowCount()):
             item = self.timeline_table.item(row, bar - 1)
             if item is not None:
                 item.setSelected(True)
+        self._refresh_waveform_playhead()
 
     def _on_playhead_changed(self, value: int) -> None:
-        self._timeline.set_playhead_bar(value / 100.0)
-        self.playhead_label.setText(f"再生位置: {self._timeline.playhead_bar:.2f} 小節")
+        self._set_playhead_bar(value / 100.0, update_slider=False)
+
+    def _set_playhead_bar(self, bar: float, update_slider: bool = True) -> None:
+        self._timeline.set_playhead_bar(bar)
+        playhead = self._timeline.playhead_bar
+        if update_slider:
+            slider_value = int(round(playhead * 100.0))
+            if self.playhead_slider.value() != slider_value:
+                self.playhead_slider.blockSignals(True)
+                self.playhead_slider.setValue(slider_value)
+                self.playhead_slider.blockSignals(False)
+        self._paint_playhead()
+
+    def _seconds_per_bar(self) -> float:
+        beats_per_second = self._tempo_bpm / 60.0
+        if beats_per_second <= 0:
+            return 2.0
+        return self._beats_per_bar / beats_per_second
+
+    def _seconds_to_bar(self, elapsed_sec: float) -> float:
+        return 1.0 + (max(elapsed_sec, 0.0) / self._seconds_per_bar())
+
+    def _bar_to_seconds(self, bar: float) -> float:
+        return max(bar - 1.0, 0.0) * self._seconds_per_bar()
+
+    def _playhead_ratio_for_track(self, track_id: str) -> float:
+        item = self._waveforms.get_item(track_id)
+        if item is None or item.duration_sec <= 0:
+            return 0.0
+        sec = self._bar_to_seconds(self._timeline.playhead_bar)
+        return min(max(sec / item.duration_sec, 0.0), 1.0)
+
+    def _refresh_waveform_playhead(self) -> None:
+        track_id = self._current_track_id()
+        if (
+            self._playback_track_id == track_id
+            and self._playback_duration_sec > 0.0
+            and self._playback_started_at is not None
+        ):
+            ratio = min(max(self._playback_elapsed_sec / self._playback_duration_sec, 0.0), 1.0)
+            self.waveform_view.set_playhead_ratio(ratio)
+            return
+        self.waveform_view.set_playhead_ratio(self._playhead_ratio_for_track(track_id))
+
+    def _refresh_waveform_view(self) -> None:
+        track_id = self._current_track_id()
+        item = self._waveforms.get_item(track_id)
+        if item is None:
+            self.waveform_view.clear()
+            return
+        self.waveform_view.set_waveform(item.samples, item.duration_sec)
+        self.waveform_view.set_playhead_ratio(self._playhead_ratio_for_track(track_id))
 
     def _on_timeline_cell_clicked(self, row: int, _column: int) -> None:
         header = self.timeline_table.verticalHeaderItem(row)
@@ -378,6 +454,9 @@ class IntegratedWindow(QMainWindow):
         file_path, _ = QFileDialog.getOpenFileName(self, "WAVファイルを選択", "", "WAV Files (*.wav)")
         if not file_path:
             return
+        self._stop_playback_sync()
+        if self._native_engine is not None and self._native_engine.is_available():
+            self._native_engine.stop_playback()
         try:
             info = self._waveforms.load_track_wav(track_id, file_path)
         except Exception as exc:
@@ -420,6 +499,7 @@ class IntegratedWindow(QMainWindow):
         if not ok:
             self._show_error("WAV再生に失敗しました。")
             return
+        self._start_playback_sync(track_id=track_id, duration_sec=item.duration_sec)
         source_label = "提案反映音" if is_rendered else "元WAV"
         self._set_status(f"再生開始: {item.path.name} ({source_label}, {self._native_engine.backend_name()})")
 
@@ -428,7 +508,42 @@ class IntegratedWindow(QMainWindow):
             self._show_error("ネイティブ音声エンジンを利用できません。")
             return
         self._native_engine.stop_playback()
+        self._stop_playback_sync()
+        self._refresh_waveform_playhead()
         self._set_status("再生を停止しました。")
+
+    def _start_playback_sync(self, track_id: str, duration_sec: float) -> None:
+        self._playback_track_id = track_id
+        self._playback_started_at = time.perf_counter()
+        self._playback_duration_sec = max(duration_sec, 0.01)
+        self._playback_elapsed_sec = 0.0
+        self._set_playhead_bar(1.0)
+        if self._playback_timer is not None:
+            self._playback_timer.start()
+
+    def _stop_playback_sync(self) -> None:
+        self._playback_track_id = None
+        self._playback_started_at = None
+        self._playback_duration_sec = 0.0
+        self._playback_elapsed_sec = 0.0
+        if self._playback_timer is not None:
+            self._playback_timer.stop()
+
+    def _on_playback_tick(self) -> None:
+        if self._playback_started_at is None:
+            return
+        elapsed = time.perf_counter() - self._playback_started_at
+        self._playback_elapsed_sec = elapsed
+        if elapsed >= self._playback_duration_sec:
+            self._playback_elapsed_sec = self._playback_duration_sec
+            end_bar = self._seconds_to_bar(self._playback_duration_sec)
+            self._set_playhead_bar(end_bar)
+            if self._current_track_id() == self._playback_track_id:
+                self.waveform_view.set_playhead_ratio(1.0)
+            self._stop_playback_sync()
+            self._set_status("再生終了")
+            return
+        self._set_playhead_bar(self._seconds_to_bar(elapsed))
 
     def _resolve_playback_wav(self, track_id: str, original_path: Path) -> tuple[Path, bool]:
         track_state = self._mixing.get_track_state(track_id)
@@ -458,8 +573,10 @@ class IntegratedWindow(QMainWindow):
         item = self._waveforms.get_item(track_id)
         if item is None:
             self.wav_info_label.setText("WAV未読込")
+            self.waveform_view.clear()
             return
         self.wav_info_label.setText(f"{item.path.name} | {item.sample_rate}Hz | {item.duration_sec:.2f}s")
+        self._refresh_waveform_view()
 
     def _on_dry_wet_changed(self, value: int) -> None:
         self.dry_wet_label.setText(f"{value}%")
@@ -475,6 +592,16 @@ class IntegratedWindow(QMainWindow):
     def _current_profile(self) -> str:
         current = self.profile_combo.currentData()
         return current if isinstance(current, str) else "clean"
+
+    def _current_suggestion_engine(self) -> str:
+        current = self.suggestion_engine_combo.currentData()
+        return current if isinstance(current, str) else "rule-based"
+
+    def _on_suggestion_engine_changed(self, _index: int | None = None) -> None:
+        engine = self._current_suggestion_engine()
+        self._mixing.set_suggestion_mode(engine)
+        label = "LLMベース" if engine == "llm-based" else "ルールベース"
+        self._set_status(f"提案エンジンを {label} に変更しました。")
 
     def _on_analyze(self) -> None:
         track_id = self._current_track_id()
@@ -512,12 +639,14 @@ class IntegratedWindow(QMainWindow):
         track_id = self._current_track_id()
         profile = self._current_profile()
         mode = self._current_mode()
+        engine = self._current_suggestion_engine()
         try:
             suggestions = self._mixing.suggest(
                 track_id=track_id,
                 profile=profile,
                 analysis_id=self._latest_analysis_id,
                 mode=mode,
+                engine_mode=engine,
             )
         except Exception as exc:
             self._show_error(str(exc))
@@ -536,7 +665,17 @@ class IntegratedWindow(QMainWindow):
             self.suggestion_list.addItem(item)
         if self.suggestion_list.count() > 0:
             self.suggestion_list.setCurrentRow(0)
-        self._set_status(f"{len(suggestions)}件の提案候補を生成しました。")
+        source = self._mixing.get_last_suggestion_source()
+        fallback = self._mixing.get_last_suggestion_fallback_reason()
+        source_label = {
+            "rule-based": "ルールベース",
+            "llm-based": "LLMベース",
+            "rule-based-fallback": "ルールベース（LLMフォールバック）",
+        }.get(source, source)
+        if fallback:
+            self._set_status(f"{len(suggestions)}件生成: {source_label} / 理由: {fallback}")
+        else:
+            self._set_status(f"{len(suggestions)}件の提案候補を生成しました（{source_label}）。")
 
     def _on_suggestion_selected(self, current: QListWidgetItem | None, _prev: QListWidgetItem | None) -> None:
         if current is None:
@@ -647,6 +786,13 @@ class IntegratedWindow(QMainWindow):
                 ]
             )
         )
+
+    def closeEvent(self, event) -> None:  # type: ignore[override]
+        self._stop_playback_sync()
+        if self._native_engine is not None and self._native_engine.is_available():
+            self._native_engine.stop_playback()
+            self._native_engine.stop()
+        super().closeEvent(event)
 
     def _show_error(self, message: str) -> None:
         QMessageBox.critical(self, "エラー", message)

@@ -25,8 +25,15 @@ class Mixing:
         profile: Literal["clean", "punch", "warm"],
         analysis_id: str | None = None,
         mode: Literal["quick", "full"] = "quick",
+        engine_mode: Literal["rule-based", "llm-based"] | None = None,
     ) -> list[Suggestion]:
-        return self._service.suggest(track_id=track_id, profile=profile, analysis_id=analysis_id, mode=mode)
+        return self._service.suggest(
+            track_id=track_id,
+            profile=profile,
+            analysis_id=analysis_id,
+            mode=mode,
+            engine_mode=engine_mode,
+        )
 
     def preview(self, track_id: str, suggestion_id: str, dry_wet: float = 1.0) -> None:
         self._service.preview(track_id=track_id, suggestion_id=suggestion_id, dry_wet=dry_wet)
@@ -45,3 +52,15 @@ class Mixing:
 
     def get_track_state(self, track_id: str) -> MixerTrackState:
         return self._service.get_track_state(track_id=track_id)
+
+    def set_suggestion_mode(self, mode: Literal["rule-based", "llm-based"]) -> None:
+        self._service.set_suggestion_mode(mode=mode)
+
+    def get_suggestion_mode(self) -> Literal["rule-based", "llm-based"]:
+        return self._service.get_suggestion_mode()
+
+    def get_last_suggestion_source(self) -> str:
+        return self._service.get_last_suggestion_source()
+
+    def get_last_suggestion_fallback_reason(self) -> str | None:
+        return self._service.get_last_suggestion_fallback_reason()

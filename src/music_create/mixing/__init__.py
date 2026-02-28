@@ -12,6 +12,7 @@ from music_create.mixing.models import (
 )
 from music_create.mixing.facade import Mixing
 from music_create.mixing.service import MixingService
+from music_create.mixing.suggestion_engine import SuggestionEngineMode
 
 __all__ = [
     "AnalysisMode",
@@ -22,6 +23,7 @@ __all__ = [
     "Mixing",
     "MixingService",
     "Suggestion",
+    "SuggestionEngineMode",
     "SuggestionCommand",
     "TrackFeatures",
 ]

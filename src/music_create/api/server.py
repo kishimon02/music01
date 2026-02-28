@@ -50,6 +50,7 @@ def create_app(mixing_service: MixingService | None = None) -> FastAPI:
                 profile=profile,
                 analysis_id=payload.analysis_id,
                 mode=AnalysisMode(payload.mode),
+                engine_mode=payload.suggestion_engine,
             )
         except (KeyError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc

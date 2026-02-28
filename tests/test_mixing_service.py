@@ -118,3 +118,10 @@ def test_get_track_state_returns_detached_copy() -> None:
     snapshot.fx_chain.effects[BuiltinEffectType.SATURATOR].parameters["mix"] = 0.8
     original = service.get_mixer_graph().tracks["kick"].fx_chain.effects[BuiltinEffectType.SATURATOR].parameters["mix"]
     assert original != 0.8
+
+
+def test_suggestion_mode_can_be_updated() -> None:
+    service = MixingService(track_signal_provider=_signal_provider)
+    assert service.get_suggestion_mode() == "rule-based"
+    service.set_suggestion_mode("llm-based")
+    assert service.get_suggestion_mode() == "llm-based"
