@@ -8,7 +8,7 @@ from uuid import uuid4
 
 from music_create.mixing.analysis import submit_analysis_job
 from music_create.mixing.fx import FXCapabilityRegistry, clamp_param
-from music_create.mixing.mixer_graph import MixerGraph
+from music_create.mixing.mixer_graph import MixerGraph, MixerTrackState, SendState
 from music_create.mixing.models import (
     AnalysisMode,
     AnalysisSnapshot,
@@ -38,6 +38,7 @@ class MixingService:
         self._analysis_results: dict[str, AnalysisSnapshot] = {}
         self._suggestions: dict[str, Suggestion] = {}
         self._commands: dict[str, SuggestionCommand] = {}
+        self._command_order: list[str] = []
         self._preview_cache: dict[str, BuiltinFXChainState] = {}
 
     def analyze(self, track_ids: list[str], mode: AnalysisMode = AnalysisMode.QUICK) -> str:
@@ -95,15 +96,26 @@ class MixingService:
         self._require_builtin_only()
         suggestion = self._get_suggestion(suggestion_id, track_id)
         track = self._mixer_graph.ensure_track(track_id)
-        before = track.fx_chain.clone()
-        updated = _apply_param_updates(before.clone(), suggestion.param_updates, dry_wet)
-        self._preview_cache[track_id] = before
+
+        baseline = self._preview_cache.get(track_id)
+        if baseline is None:
+            baseline = track.fx_chain.clone()
+            self._preview_cache[track_id] = baseline
+        updated = _apply_param_updates(baseline.clone(), suggestion.param_updates, dry_wet)
         track.fx_chain = updated
+
+    def cancel_preview(self, track_id: str) -> None:
+        baseline = self._preview_cache.pop(track_id, None)
+        if baseline is None:
+            return
+        track = self._mixer_graph.ensure_track(track_id)
+        track.fx_chain = baseline
 
     def apply(self, track_id: str, suggestion_id: str) -> str:
         self._require_builtin_only()
         suggestion = self._get_suggestion(suggestion_id, track_id)
         track = self._mixer_graph.ensure_track(track_id)
+        self.cancel_preview(track_id)
 
         before = track.fx_chain.clone()
         after = _apply_param_updates(before.clone(), suggestion.param_updates, 1.0)
@@ -117,6 +129,7 @@ class MixingService:
         )
         command.applied = True
         self._commands[command.command_id] = command
+        self._command_order.append(command.command_id)
         return command.command_id
 
     def revert(self, command_id: str) -> None:
@@ -124,11 +137,25 @@ class MixingService:
         if command is None:
             raise KeyError(f"Command '{command_id}' not found")
         track = self._mixer_graph.ensure_track(command.track_id)
+        self.cancel_preview(command.track_id)
         track.fx_chain = command.before_chain.clone()
         command.applied = False
 
+    def get_command_history(self, track_id: str | None = None) -> list[SuggestionCommand]:
+        result: list[SuggestionCommand] = []
+        for command_id in reversed(self._command_order):
+            command = self._commands[command_id]
+            if track_id is not None and command.track_id != track_id:
+                continue
+            result.append(command)
+        return result
+
     def get_mixer_graph(self) -> MixerGraph:
         return self._mixer_graph
+
+    def get_track_state(self, track_id: str) -> MixerTrackState:
+        track = self._mixer_graph.ensure_track(track_id)
+        return _clone_track_state(track)
 
     def _require_builtin_only(self) -> None:
         if not self._capability_registry.builtin_only:
@@ -158,3 +185,21 @@ def _apply_param_updates(
             blended_value = current_value + (target_value - current_value) * normalized_mix
             effect_state.parameters[param_id] = clamp_param(effect_type, param_id, blended_value)
     return chain
+
+
+def _clone_track_state(track: MixerTrackState) -> MixerTrackState:
+    return MixerTrackState(
+        track_id=track.track_id,
+        input_gain_db=track.input_gain_db,
+        fx_chain=track.fx_chain.clone(),
+        fader_db=track.fader_db,
+        pan=track.pan,
+        sends=[
+            SendState(
+                target_bus_id=send.target_bus_id,
+                level_db=send.level_db,
+                pre_fader=send.pre_fader,
+            )
+            for send in track.sends
+        ],
+    )

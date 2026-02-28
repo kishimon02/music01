@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from typing import Literal
 
-from music_create.mixing.models import AnalysisSnapshot, Suggestion
+from music_create.mixing.mixer_graph import MixerTrackState
+from music_create.mixing.models import AnalysisSnapshot, Suggestion, SuggestionCommand
 from music_create.mixing.service import MixingService
 
 
@@ -33,5 +34,14 @@ class Mixing:
     def apply(self, track_id: str, suggestion_id: str) -> str:
         return self._service.apply(track_id=track_id, suggestion_id=suggestion_id)
 
+    def cancel_preview(self, track_id: str) -> None:
+        self._service.cancel_preview(track_id=track_id)
+
     def revert(self, command_id: str) -> None:
         self._service.revert(command_id=command_id)
+
+    def get_command_history(self, track_id: str | None = None) -> list[SuggestionCommand]:
+        return self._service.get_command_history(track_id=track_id)
+
+    def get_track_state(self, track_id: str) -> MixerTrackState:
+        return self._service.get_track_state(track_id=track_id)

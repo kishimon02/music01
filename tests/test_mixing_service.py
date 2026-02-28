@@ -40,6 +40,10 @@ def test_preview_is_nonpersistent_after_apply_revert_cycle() -> None:
     previewed = graph.tracks["snare"].fx_chain.effects[BuiltinEffectType.SATURATOR].parameters["mix"]
     assert previewed != original
 
+    service.cancel_preview("snare")
+    restored = graph.tracks["snare"].fx_chain.effects[BuiltinEffectType.SATURATOR].parameters["mix"]
+    assert restored == original
+
 
 def test_analyze_id_roundtrip() -> None:
     service = MixingService(track_signal_provider=_signal_provider)
@@ -68,3 +72,49 @@ def test_suggest_can_reuse_existing_analysis_snapshot() -> None:
 
     suggestions = service.suggest(track_id="kick", profile="clean", analysis_id=analysis_id, mode="full")
     assert len(suggestions) >= 3
+
+
+def test_apply_uses_baseline_even_after_preview() -> None:
+    service = MixingService(track_signal_provider=_signal_provider)
+    suggestions = service.suggest(track_id="kick", profile="punch")
+    suggestion = suggestions[0]
+    graph = service.get_mixer_graph()
+
+    service.preview("kick", suggestion.suggestion_id, dry_wet=0.5)
+    service.apply("kick", suggestion.suggestion_id)
+    ratio_after_preview_then_apply = graph.tracks["kick"].fx_chain.effects[BuiltinEffectType.COMPRESSOR].parameters[
+        "ratio"
+    ]
+
+    fresh = MixingService(track_signal_provider=_signal_provider)
+    fresh_suggestion = fresh.suggest(track_id="kick", profile="punch")[0]
+    fresh.apply("kick", fresh_suggestion.suggestion_id)
+    ratio_direct_apply = fresh.get_mixer_graph().tracks["kick"].fx_chain.effects[BuiltinEffectType.COMPRESSOR].parameters[
+        "ratio"
+    ]
+
+    assert ratio_after_preview_then_apply == ratio_direct_apply
+
+
+def test_command_history_tracks_apply_and_revert_state() -> None:
+    service = MixingService(track_signal_provider=_signal_provider)
+    suggestion = service.suggest(track_id="kick", profile="clean")[0]
+    command_id = service.apply("kick", suggestion.suggestion_id)
+
+    history = service.get_command_history(track_id="kick")
+    assert history
+    assert history[0].command_id == command_id
+    assert history[0].applied is True
+
+    service.revert(command_id)
+    history_after_revert = service.get_command_history(track_id="kick")
+    assert history_after_revert[0].applied is False
+
+
+def test_get_track_state_returns_detached_copy() -> None:
+    service = MixingService(track_signal_provider=_signal_provider)
+    snapshot = service.get_track_state("kick")
+
+    snapshot.fx_chain.effects[BuiltinEffectType.SATURATOR].parameters["mix"] = 0.8
+    original = service.get_mixer_graph().tracks["kick"].fx_chain.effects[BuiltinEffectType.SATURATOR].parameters["mix"]
+    assert original != 0.8

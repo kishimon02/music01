@@ -1,69 +1,100 @@
 # music-create
 
 AI補助型DTMデスクトップアプリのための、アーキテクチャ先行スキャフォールドです。  
-MVPを維持しつつ、後続のミキシング自動化を安全に追加できる境界を実装しています。
+現在は「実波形入力での特徴抽出」と「C++音声コア経由の実音再生（WAV）」まで実装しています。
 
-## 現在の実装範囲
+## 実装済みフェーズ
 
-### Phase A（基盤）
+1. Phase A: ミキシング基盤（MixerGraph / BuiltinFX / Command / Migration）
+2. Phase B: 解析・提案強化（`quick/full`、拡張特徴量、複数候補）
+3. Phase C: 提案比較UI（試聴、適用、履歴、巻き戻し）
+4. Phase D: DAWタイムライン統合UI（トラックレーン、クリップ、プレイヘッド）
+5. Phase E: 実波形入力 + C++音声コア再生
+6. Phase F: 音声バックエンド抽象化（`auto` / `winmm` / `juce`差し替え口）
 
-- 固定チェーン構造のミキサーグラフ  
-  `Input -> BuiltinFXChain -> Fader/Pan -> Sends`
-- 内蔵FX機能（EQ / Compressor / Gate / Saturator）と固定パラメータID
-- `SuggestionCommand` の適用/巻き戻しモデル（手動適用のみ）
-- `.mcpj` の `format_version: 1 -> 2` マイグレーション
-- API契約
-  - `POST /v1/mix/analyze`
-  - `POST /v1/mix/suggest`
-
-### Phase B（解析・提案強化）
-
-- `quick / full` の解析モード分岐
-- 拡張特徴量の追加
-  - `crest_factor_db`
-  - `loudness_range_db`
-  - `transient_density`
-  - `zero_crossing_rate`
-- 提案候補を複数化（最大3件）
-  - `variant` / `score` 付きで返却
-- `analysis_id` 指定による解析結果の再利用
-
-## クイックスタート
+## セットアップ
 
 ```bash
 py -3.12 -m venv .venv
 . .venv/Scripts/activate
-pip install -e .[dev]
-pytest
-uvicorn music_create.api.server:app --reload
+pip install -e .[dev,ui]
 ```
 
-起動後の確認:
+## ネイティブ音声コア（C++）ビルド
+
+```bash
+music-create-build-native
+```
+
+- 出力: `native/build/music_create_audio_core.dll`
+- UI起動時も自動ビルドを試みます（初回のみ数秒かかる場合があります）
+- バックエンド選択は環境変数 `MUSIC_CREATE_AUDIO_BACKEND`（`auto` / `winmm` / `juce`）で指定可能です
+
+## 実行
+
+### APIサーバー
+
+```bash
+uvicorn music_create.api.server:app --reload
+```
 
 - `http://127.0.0.1:8000/`（ステータス）
 - `http://127.0.0.1:8000/docs`（Swagger UI）
 
-## API例
+### 統合デスクトップUI
 
 ```bash
-curl -X POST "http://127.0.0.1:8000/v1/mix/analyze" ^
-  -H "Content-Type: application/json" ^
-  -d "{\"track_ids\":[\"t1\"],\"mode\":\"full\"}"
+music-create-ui
 ```
 
+## UI操作方法（実波形 + 実音再生）
+
+1. タイムライン行をクリックして対象トラックを選択する
+2. `WAV読込` でトラックにWAVを割り当てる
+3. `再生` でC++音声コア経由の実音再生を開始する
+4. `停止` で再生停止する
+5. `解析` で、読込WAVの波形から特徴量を抽出する
+6. `提案` でミキシング候補を比較する
+7. `試聴` / `試聴取消` / `適用` / `選択を巻き戻し` で提案を運用する
+
+### `試聴` / `試聴取消` / `適用` / `選択を巻き戻し` の動作詳細
+
+1. `試聴`
+   - 現在選択中の提案を、`Dry/Wet` スライダー値（0.0〜1.0）でブレンドしてトラックの内蔵FX状態へ一時反映します。
+   - 履歴（コマンド履歴）には登録されません。
+   - 連続で `試聴` を押しても、最初に保持したベースライン（試聴前状態）を基準に再計算されます。
+   - その後 `再生` を押すと、試聴中のFX状態を反映した音が鳴ります（ステータスに「提案反映音」と表示）。
+
+2. `試聴取消`
+   - `試聴` 開始時に保存したベースライン状態へ戻します。
+   - 履歴は増えません。
+   - 取消後に `再生` すると、試聴前（または直近適用済み）状態の音で再生されます。
+
+3. `適用`
+   - 選択中の提案を 100%（Dry/Wet=1.0）で確定反映します。
+   - 反映前に試聴中であっても、試聴状態ではなくベースラインから適用されます。
+   - `SuggestionCommand` として履歴に1件追加され、履歴一覧に表示されます。
+   - 適用後 `再生` すると、適用済みのFX状態を反映した音が鳴ります。
+
+4. `選択を巻き戻し`
+   - 履歴一覧で選択したコマンドの `before` 状態へ戻します（対象コマンドの適用状態は未適用に更新）。
+   - 他の履歴エントリは削除せず保持されます。
+   - 巻き戻し後 `再生` すると、巻き戻し後のFX状態を反映した音が鳴ります。
+
+## 主要コマンド
+
 ```bash
-curl -X POST "http://127.0.0.1:8000/v1/mix/suggest" ^
-  -H "Content-Type: application/json" ^
-  -d "{\"track_id\":\"t1\",\"profile\":\"clean\",\"mode\":\"full\"}"
+pytest -q
+music-create-build-native
+music-create-ui
 ```
 
 ## ドキュメント
 
-- 全体アーキテクチャ: `docs/architecture.md`
-- 詳細設計書: `docs/design.md`
+1. 全体アーキテクチャ: `docs/architecture.md`
+2. 詳細設計書: `docs/design.md`
 
 ## 補足
 
-- 本リポジトリはスキャフォールドであり、完全なDAW実装ではありません。
-- リアルタイム音声処理は、今後の C++/JUCE 統合フェーズで実装します。
-- 将来の JUCE + pybind11 連携に向けたネイティブ骨組みは `native/` にあります。
+1. 既定のネイティブ再生バックエンドは `auto`（Windowsでは `cpp-winmm` を選択）です。
+2. `juce` は差し替え用プレースホルダー実装を先行導入済みで、同一C API境界でJUCE本体へ置換可能です。

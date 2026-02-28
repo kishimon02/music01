@@ -14,10 +14,17 @@ dependencies = [
   "uvicorn>=0.34.0",
 ]
 
+[project.scripts]
+music-create-ui = "music_create.ui.app:main"
+music-create-build-native = "music_create.audio.native_engine:build_main"
+
 [project.optional-dependencies]
 dev = [
   "pytest>=8.3.0",
   "httpx>=0.28.0",
+]
+ui = [
+  "PySide6_Essentials>=6.8.0",
 ]
 
 [tool.hatch.build.targets.wheel]

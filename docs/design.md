@@ -2,74 +2,90 @@
 
 ## 1. 目的
 
-本設計書は、MVPを維持しつつ、後続でトラック単位のミキシング自動化を安全に追加するための技術仕様を定義する。
+MVPを維持しつつ、後続のトラック単位ミキシング自動化を安全に追加するための実装仕様を定義する。  
+現在は、実波形入力・提案UI・タイムライン統合・C++音声コア再生まで実装している。
 
-ミキシング自動化の基本フローは以下とする。
+## 2. フェーズ構成
 
-1. Analyze実行
-2. 提案候補表示
-3. 手動適用（自動適用は行わない）
-
-## 2. スコープ
-
-### 2.1 MVPスコープ
-
-1. 対象: プロ志向ユーザー
-2. 対応: Windows + macOS（デスクトップ単体）
-3. 主軸UI: 線形タイムライン
-4. 作曲支援AI: コード/メロディ/ドラム提案
-5. 録音: MIDI + オーディオ録音
-6. プラグイン: VST3再生 + パラメータ保存
-7. 書き出し: MIDI + WAV
-
-### 2.2 MVP外（後続）
-
-1. バス処理、マスタリング自動化
-2. VST3全般の横断最適化
-3. AU/CLAP対応
+1. Phase A: ドメイン基盤（MixerGraph / BuiltinFX / Command / Migration）
+2. Phase B: 解析・提案強化（特徴量拡張、複数候補、分析再利用）
+3. Phase C: 提案比較UI（適用・履歴・巻き戻し）
+4. Phase D: タイムライン統合UI（トラックレーン、クリップ配置、プレイヘッド）
+5. Phase E: 実波形入力 + C++音声コア再生
+6. Phase F: 音声バックエンド抽象化（`auto` / `winmm` / `juce`）
 
 ## 3. 技術構成
 
 1. UI/制御: Python 3.12 + PySide6
-2. 音声コア: C++20 + JUCE
-3. 連携: pybind11
-4. AI: ローカル（ONNX Runtime）+ クラウド（FastAPI）
+2. 音声コア: C++20
+3. 再生バックエンド: 抽象化レイヤ（既定`auto`、Windows実装はWinMM）
+4. 連携: C API + `ctypes`
+5. API: FastAPI
 
-## 4. 先行実装境界（Phase A）
+## 4. ドメイン設計
 
-1. `MixerGraph`
-   - 固定構造: `Input -> BuiltinFXChain -> Fader/Pan -> Sends`
-2. `BuiltinFXChain`
-   - EQ / Compressor / Gate / Saturator
-   - パラメータID固定
-3. `AnalysisSnapshot`
-   - トラック単位の解析特徴量を保持
-4. `SuggestionCommand`
-   - apply/revert可能な差分コマンド
-5. `FeatureExtraction`
-   - 非リアルタイムスレッドでAnalyze実行
-6. `FXCapabilityRegistry`
-   - MVPでは `builtin_only=true`
+### 4.1 MixerGraph
 
-## 5. Phase B実装（今回反映）
+1. 固定構造: `Input -> BuiltinFXChain -> Fader/Pan -> Sends`
+2. 目的: 自動提案の適用先を一意にする
 
-1. 解析特徴量を拡張
-   - `crest_factor_db`
-   - `loudness_range_db`
-   - `transient_density`
-   - `zero_crossing_rate`
-2. `quick/full` 解析分岐を明確化
-   - quick: 高速近似
-   - full: フレームRMSと帯域推定を含む詳細解析
-3. 提案モデルを強化
-   - 1候補から複数候補（最大3件）へ拡張
-   - 候補ごとに `variant` と `score` を付与
-4. Analyze結果の再利用
-   - `analysis_id` 指定で提案生成可能
+### 4.2 BuiltinFX
 
-## 6. 公開インターフェース
+1. EQ / Compressor / Gate / Saturator
+2. パラメータID固定
+3. `FXCapabilityRegistry.builtin_only=true` をMVP既定とする
 
-### 6.1 Python API
+### 4.3 AnalysisSnapshot（保持指標）
+
+1. `lufs`
+2. `peak_dbfs`
+3. `rms_dbfs`
+4. `crest_factor_db`
+5. `spectral_centroid_hz`
+6. `band_energy_low`
+7. `band_energy_mid`
+8. `band_energy_high`
+9. `dynamic_range_db`
+10. `loudness_range_db`
+11. `transient_density`
+12. `zero_crossing_rate`
+
+### 4.4 Suggestion / Command
+
+1. 提案候補は最大3件
+2. 各候補に `variant` と `score` を付与
+3. 適用は `SuggestionCommand` として保存
+4. `revert` で巻き戻し可能
+5. 履歴取得: `get_command_history(track_id=None)`
+
+### 4.5 Timeline（Phase D）
+
+1. `TimelineState` でトラック・クリップ・プレイヘッドを管理
+2. `TimelineTrack` / `TimelineClip` の明示モデル化
+3. トラック行選択とミキシング対象トラックIDを同期
+
+### 4.6 Real Waveform Input（Phase E）
+
+1. `WaveformRepository` でトラックごとにWAVを管理
+2. `load_wav_mono_float32` でWAVをモノラルfloatに変換
+3. 解析は `track_signal_provider` から実波形を取得
+
+### 4.7 C++ Audio Core（Phase E）
+
+1. C++側に `mc_audio_*` C APIを公開
+2. Python側 `NativeAudioEngine` が `ctypes` でDLLをロード
+3. 再生制御:
+   - `mc_audio_play_file_w`
+   - `mc_audio_stop_playback`
+4. バックエンド切替制御:
+   - `mc_audio_set_backend`
+   - `mc_audio_backend_id`
+   - `mc_audio_is_backend_available`
+5. 既定は `auto`（WindowsではWinMM選択）、`juce` は差し替え用プレースホルダーを先行実装
+
+## 5. 公開インターフェース
+
+### 5.1 Python API
 
 ```python
 Mixing.analyze(track_ids:list[str], mode:Literal["quick","full"]="quick") -> analysis_id
@@ -81,63 +97,69 @@ Mixing.suggest(
     mode:Literal["quick","full"]="quick",
 ) -> list[Suggestion]
 Mixing.preview(track_id:str, suggestion_id:str, dry_wet:float=1.0) -> None
+Mixing.cancel_preview(track_id:str) -> None
 Mixing.apply(track_id:str, suggestion_id:str) -> command_id
 Mixing.revert(command_id:str) -> None
+Mixing.get_command_history(track_id:str|None=None) -> list[SuggestionCommand]
 ```
 
-### 6.2 API契約
+### 5.2 API契約
 
 ```http
 POST /v1/mix/analyze
 POST /v1/mix/suggest
 ```
 
-`/v1/mix/suggest` リクエスト:
+## 6. UI仕様
 
-```json
-{
-  "track_id": "t1",
-  "profile": "clean",
-  "analysis_id": "optional",
-  "mode": "quick"
-}
-```
+### 6.1 提案UI（Phase C）
 
-レスポンス候補には以下を含む。
+1. 解析実行
+2. 提案候補一覧表示（score順）
+3. 候補詳細表示（reason / param updates）
+4. Dry/Wet試聴
+5. 試聴取消
+6. 適用
+7. 履歴表示
+8. 履歴選択リバート
 
-1. `suggestion_id`
-2. `variant`
-3. `score`
-4. `param_updates`
+### 6.2 タイムラインUI（Phase D）
 
-### 6.3 プロジェクト形式（`.mcpj`）
+1. トラックレーン表示（縦軸）
+2. 小節グリッド表示（横軸）
+3. MIDI/オーディオクリップ表示（色分け）
+4. 再生位置スライダー（プレイヘッド）
+5. トラック追加、MIDIクリップ追加、オーディオクリップ追加
 
-`format_version: 2` を基準とする。
+### 6.3 実波形・再生UI（Phase E）
 
-主な拡張キー:
+1. `WAV読込` でトラックにWAVを割り当て
+2. `再生` / `停止` でC++音声コア再生制御
+3. 読込WAVを解析対象へ自動切替
 
-1. `mixer_graph`
-2. `builtin_fx_states`
-3. `analysis_snapshots`
-4. `suggestion_history`
+## 7. テスト方針
 
-互換方針:
+1. 提案適用/巻き戻し可逆性
+2. full解析で拡張特徴量が有効範囲内に入ること
+3. preview後applyがベースラインから適用されること
+4. command history状態遷移
+5. API契約テスト
+6. Timelineモデルテスト
+7. WAV読込・トラック紐付けテスト
+8. ネイティブエンジンDLLのビルド/ロードテスト
 
-1. `format_version: 1` 読込時に `v2` へ自動移行
-2. 未設定FXはデフォルト値で補完
+## 8. 次フェーズ
 
-## 7. 非機能要件
+1. `juce` プレースホルダーをJUCE本実装へ置換（C API契約は維持）
+2. 実オーディオ再生中のプレイヘッド同期
+3. 波形表示コンポーネント実装
+4. 提案生成器を `rule-based` / `LLM-based` で切替可能にする（Phase F）
+5. 初期既定は `rule-based` のまま維持し、設定または機能フラグで `LLM-based` を有効化する
+6. `LLM-based` 失敗時は自動で `rule-based` にフォールバックし、提案生成を継続する
+7. `Analyze -> 提案表示 -> 手動適用` の運用原則はLLM導入後も維持し、自動適用は行わない
 
-1. 片道レイテンシ目標: 10ms以下
-2. Analyze中も再生安定性を維持
-3. quick解析目標: 30トラック/3分で15秒以内
-4. full解析目標: 60秒以内
-5. 提案適用/ロールバックのUI反映: 200ms以内
+## 9. 言語ポリシー
 
-## 8. テスト方針
-
-1. 回帰テスト: 提案未適用時のレンダリング不変性
-2. 可逆テスト: apply/revertで状態復元
-3. 特徴量テスト: full解析で拡張指標が有効範囲内に入ること
-4. 互換テスト: `v1 -> v2` 移行整合性
-5. API契約テスト: `/v1/mix/analyze`, `/v1/mix/suggest`
+1. UI表示文言（ラベル、ボタン、ダイアログ、ステータス、ヘルプ）は日本語で統一する。
+2. 新規作成・更新するドキュメント（`README.md`、`docs/`配下）は日本語で作成する。
+3. API識別子やコード上の型名は互換性のため英語を維持してよいが、説明文・利用案内は日本語で記述する。
