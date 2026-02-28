@@ -45,7 +45,12 @@ def create_app(mixing_service: MixingService | None = None) -> FastAPI:
     def suggest_mix(payload: SuggestRequest) -> SuggestResponse:
         try:
             profile: MixProfile = payload.profile
-            suggestions = service.suggest(track_id=payload.track_id, profile=profile)
+            suggestions = service.suggest(
+                track_id=payload.track_id,
+                profile=profile,
+                analysis_id=payload.analysis_id,
+                mode=AnalysisMode(payload.mode),
+            )
         except (KeyError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -55,6 +60,8 @@ def create_app(mixing_service: MixingService | None = None) -> FastAPI:
                     suggestion_id=item.suggestion_id,
                     track_id=item.track_id,
                     profile=item.profile,
+                    variant=item.variant,
+                    score=item.score,
                     reason=item.reason,
                     param_updates={k.value: v for k, v in item.param_updates.items()},
                 )

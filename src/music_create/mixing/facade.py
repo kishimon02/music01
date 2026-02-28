@@ -18,8 +18,14 @@ class Mixing:
     def get_snapshot(self, analysis_id: str) -> AnalysisSnapshot:
         return self._service.get_snapshot(analysis_id)
 
-    def suggest(self, track_id: str, profile: Literal["clean", "punch", "warm"]) -> list[Suggestion]:
-        return self._service.suggest(track_id=track_id, profile=profile)
+    def suggest(
+        self,
+        track_id: str,
+        profile: Literal["clean", "punch", "warm"],
+        analysis_id: str | None = None,
+        mode: Literal["quick", "full"] = "quick",
+    ) -> list[Suggestion]:
+        return self._service.suggest(track_id=track_id, profile=profile, analysis_id=analysis_id, mode=mode)
 
     def preview(self, track_id: str, suggestion_id: str, dry_wet: float = 1.0) -> None:
         self._service.preview(track_id=track_id, suggestion_id=suggestion_id, dry_wet=dry_wet)

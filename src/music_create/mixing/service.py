@@ -67,14 +67,23 @@ class MixingService:
         del self._analysis_jobs[analysis_id]
         return completed
 
-    def suggest(self, track_id: str, profile: MixProfile) -> list[Suggestion]:
+    def suggest(
+        self,
+        track_id: str,
+        profile: MixProfile,
+        analysis_id: str | None = None,
+        mode: AnalysisMode = AnalysisMode.QUICK,
+    ) -> list[Suggestion]:
         if profile not in {"clean", "punch", "warm"}:
             raise ValueError(f"Unsupported profile '{profile}'")
         track = self._mixer_graph.ensure_track(track_id)
-        signal = self._track_signal_provider(track_id)
-
-        analysis_id = self.analyze([track.track_id], mode=AnalysisMode.QUICK)
-        snapshot = self.get_snapshot(analysis_id)
+        if analysis_id is None:
+            generated_id = self.analyze([track.track_id], mode=mode)
+            snapshot = self.get_snapshot(generated_id)
+        else:
+            snapshot = self.get_snapshot(analysis_id)
+            if track_id not in snapshot.track_features:
+                raise KeyError(f"Track '{track_id}' is not included in analysis '{analysis_id}'")
         features = snapshot.track_features[track_id]
 
         suggestions = suggest_from_features(track_id, profile, features)

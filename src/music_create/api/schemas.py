@@ -19,12 +19,16 @@ class AnalyzeResponse(BaseModel):
 class SuggestRequest(BaseModel):
     track_id: str
     profile: Literal["clean", "punch", "warm"] = "clean"
+    analysis_id: str | None = None
+    mode: Literal["quick", "full"] = "quick"
 
 
 class SuggestionCandidate(BaseModel):
     suggestion_id: str
     track_id: str
     profile: str
+    variant: str
+    score: float
     reason: str
     param_updates: dict[str, dict[str, float]]
 

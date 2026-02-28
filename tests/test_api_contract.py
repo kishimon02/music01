@@ -45,6 +45,23 @@ def test_mix_suggest_endpoint_returns_candidates() -> None:
     candidate = body["candidates"][0]
     assert "suggestion_id" in candidate
     assert "param_updates" in candidate
+    assert "variant" in candidate
+    assert "score" in candidate
+
+
+def test_mix_suggest_can_use_existing_analysis_id() -> None:
+    app = create_app(MixingService(track_signal_provider=_signal_provider))
+    client = TestClient(app)
+
+    analysis_res = client.post("/v1/mix/analyze", json={"track_ids": ["t1"], "mode": "full"})
+    analysis_id = analysis_res.json()["analysis_id"]
+
+    suggest_res = client.post(
+        "/v1/mix/suggest",
+        json={"track_id": "t1", "profile": "warm", "analysis_id": analysis_id, "mode": "full"},
+    )
+    assert suggest_res.status_code == 200
+    assert len(suggest_res.json()["candidates"]) >= 3
 
 
 def test_mix_suggest_rejects_invalid_profile() -> None:

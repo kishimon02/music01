@@ -51,11 +51,15 @@ class TrackFeatures:
     lufs: float
     peak_dbfs: float
     rms_dbfs: float
+    crest_factor_db: float
     spectral_centroid_hz: float
     band_energy_low: float
     band_energy_mid: float
     band_energy_high: float
     dynamic_range_db: float
+    loudness_range_db: float
+    transient_density: float
+    zero_crossing_rate: float
 
 
 @dataclass(slots=True)
@@ -80,6 +84,8 @@ class Suggestion:
     suggestion_id: str
     track_id: str
     profile: MixProfile
+    variant: str
+    score: float
     reason: str
     param_updates: dict[BuiltinEffectType, dict[str, float]]
 

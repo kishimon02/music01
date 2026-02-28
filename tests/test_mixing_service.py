@@ -13,6 +13,8 @@ def test_apply_and_revert_suggestion() -> None:
 
     suggestions = service.suggest(track_id="kick", profile="punch")
     suggestion = suggestions[0]
+    assert len(suggestions) >= 3
+    assert suggestions[0].score >= suggestions[1].score >= suggestions[2].score
 
     graph = service.get_mixer_graph()
     before_ratio = graph.tracks["kick"].fx_chain.effects[BuiltinEffectType.COMPRESSOR].parameters["ratio"]
@@ -45,3 +47,24 @@ def test_analyze_id_roundtrip() -> None:
     snapshot = service.get_snapshot(analysis_id)
     assert snapshot.analysis_id == analysis_id
     assert "kick" in snapshot.track_features
+
+
+def test_full_analysis_exposes_extended_features() -> None:
+    service = MixingService(track_signal_provider=_signal_provider)
+    analysis_id = service.analyze(track_ids=["kick"], mode="full")
+    snapshot = service.get_snapshot(analysis_id)
+    features = snapshot.track_features["kick"]
+
+    assert features.crest_factor_db >= 0.0
+    assert features.loudness_range_db >= 0.0
+    assert 0.0 <= features.transient_density <= 1.0
+    assert 0.0 <= features.zero_crossing_rate <= 1.0
+
+
+def test_suggest_can_reuse_existing_analysis_snapshot() -> None:
+    service = MixingService(track_signal_provider=_signal_provider)
+    analysis_id = service.analyze(track_ids=["kick"], mode="full")
+    _ = service.get_snapshot(analysis_id)
+
+    suggestions = service.suggest(track_id="kick", profile="clean", analysis_id=analysis_id, mode="full")
+    assert len(suggestions) >= 3
