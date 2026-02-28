@@ -1,0 +1,31 @@
+"""Public API facade matching the agreed Python interface."""
+
+from __future__ import annotations
+
+from typing import Literal
+
+from music_create.mixing.models import AnalysisSnapshot, Suggestion
+from music_create.mixing.service import MixingService
+
+
+class Mixing:
+    def __init__(self, service: MixingService | None = None) -> None:
+        self._service = service or MixingService()
+
+    def analyze(self, track_ids: list[str], mode: Literal["quick", "full"] = "quick") -> str:
+        return self._service.analyze(track_ids=track_ids, mode=mode)
+
+    def get_snapshot(self, analysis_id: str) -> AnalysisSnapshot:
+        return self._service.get_snapshot(analysis_id)
+
+    def suggest(self, track_id: str, profile: Literal["clean", "punch", "warm"]) -> list[Suggestion]:
+        return self._service.suggest(track_id=track_id, profile=profile)
+
+    def preview(self, track_id: str, suggestion_id: str, dry_wet: float = 1.0) -> None:
+        self._service.preview(track_id=track_id, suggestion_id=suggestion_id, dry_wet=dry_wet)
+
+    def apply(self, track_id: str, suggestion_id: str) -> str:
+        return self._service.apply(track_id=track_id, suggestion_id=suggestion_id)
+
+    def revert(self, command_id: str) -> None:
+        self._service.revert(command_id=command_id)
