@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, is_dataclass
+from typing import Any
 from uuid import uuid4
 
 
@@ -34,11 +35,20 @@ class TimelineState:
         self.playhead_bar = 1.0
         self.tracks: dict[str, TimelineTrack] = {}
         self.clips: dict[str, TimelineClip] = {}
+        self.midi_clip_data: dict[str, dict[str, Any]] = {}
 
     def add_track(self, name: str | None = None) -> TimelineTrack:
         index = len(self.tracks) + 1
         track_id = f"track-{index}"
         track = TimelineTrack(track_id=track_id, name=name or f"Track {index}")
+        self.tracks[track_id] = track
+        return track
+
+    def ensure_track(self, track_id: str, name: str | None = None) -> TimelineTrack:
+        track = self.tracks.get(track_id)
+        if track is not None:
+            return track
+        track = TimelineTrack(track_id=track_id, name=name or track_id)
         self.tracks[track_id] = track
         return track
 
@@ -49,6 +59,7 @@ class TimelineState:
         start_bar: int,
         length_bars: int,
         name: str | None = None,
+        midi_data: dict[str, Any] | Any | None = None,
     ) -> TimelineClip:
         if track_id not in self.tracks:
             raise KeyError(f"track '{track_id}' not found")
@@ -70,7 +81,19 @@ class TimelineState:
             length_bars=length_bars,
         )
         self.clips[clip.clip_id] = clip
+        if clip_type == "midi" and midi_data is not None:
+            if is_dataclass(midi_data):
+                self.midi_clip_data[clip.clip_id] = asdict(midi_data)
+            elif hasattr(midi_data, "__dict__"):
+                self.midi_clip_data[clip.clip_id] = dict(vars(midi_data))
+            else:
+                self.midi_clip_data[clip.clip_id] = dict(midi_data)
         return clip
+
+    def remove_clip(self, clip_id: str) -> None:
+        if clip_id in self.clips:
+            del self.clips[clip_id]
+        self.midi_clip_data.pop(clip_id, None)
 
     def set_playhead_bar(self, bar: float) -> None:
         self.playhead_bar = min(max(bar, 1.0), float(self.bars))
@@ -81,4 +104,3 @@ class TimelineState:
     def clips_for_track(self, track_id: str) -> list[TimelineClip]:
         items = [clip for clip in self.clips.values() if clip.track_id == track_id]
         return sorted(items, key=lambda clip: (clip.start_bar, clip.clip_id))
-

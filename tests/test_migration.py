@@ -29,3 +29,19 @@ def test_v2_validation_passthrough() -> None:
     }
     migrated = migrate_to_v2(current)
     assert migrated.format_version == 2
+
+
+def test_invalid_default_grid_is_replaced_and_warning_is_added() -> None:
+    current = {
+        "format_version": 2,
+        "tracks": [{"id": "t1"}],
+        "mixer_graph": {"tracks": {"t1": {"track_id": "t1"}}},
+        "composition_settings": {"default_grid": "1/128"},
+    }
+
+    migrated = migrate_to_v2(current)
+    dumped = migrated.model_dump()
+
+    assert dumped["composition_settings"]["default_grid"] == "1/16"
+    assert dumped["compose_history"]
+    assert "invalid default_grid '1/128'" in dumped["compose_history"][-1]["message"]

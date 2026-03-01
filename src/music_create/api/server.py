@@ -8,17 +8,27 @@ from fastapi.responses import Response
 from music_create.api.schemas import (
     AnalyzeRequest,
     AnalyzeResponse,
+    ComposeSuggestRequest,
+    ComposeSuggestResponse,
+    ComposeSuggestionCandidate,
     SuggestRequest,
     SuggestResponse,
     SuggestionCandidate,
 )
+from music_create.composition.models import ComposeRequest
+from music_create.composition.service import CompositionService
 from music_create.mixing.models import AnalysisMode, MixProfile
 from music_create.mixing.service import MixingService
+from music_create.ui.timeline import TimelineState
 
 
-def create_app(mixing_service: MixingService | None = None) -> FastAPI:
+def create_app(
+    mixing_service: MixingService | None = None,
+    composition_service: CompositionService | None = None,
+) -> FastAPI:
     app = FastAPI(title="music-create API", version="0.1.0")
     service = mixing_service or MixingService()
+    compose_service = composition_service or CompositionService(TimelineState(bars=64))
 
     @app.get("/")
     def root() -> dict[str, str]:
@@ -68,6 +78,46 @@ def create_app(mixing_service: MixingService | None = None) -> FastAPI:
                 )
                 for item in suggestions
             ]
+        )
+
+    @app.post("/v1/compose/suggest", response_model=ComposeSuggestResponse)
+    def suggest_compose(payload: ComposeSuggestRequest) -> ComposeSuggestResponse:
+        try:
+            request = ComposeRequest(
+                track_id=payload.track_id,
+                part=payload.part,
+                key=payload.key,
+                scale=payload.scale,
+                bars=payload.bars,
+                style=payload.style,
+                grid=payload.grid,
+                program=payload.program,
+            )
+            suggestions = compose_service.suggest(request=request, engine_mode=payload.engine_mode)
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        return ComposeSuggestResponse(
+            candidates=[
+                ComposeSuggestionCandidate(
+                    suggestion_id=item.suggestion_id,
+                    track_id=item.request.track_id,
+                    part=item.request.part,
+                    key=item.request.key,
+                    scale=item.request.scale,
+                    bars=item.request.bars,
+                    style=item.request.style,
+                    grid=item.clips[0].grid,
+                    source=item.source,
+                    score=item.score,
+                    reason=item.reason,
+                    note_count=len(item.clips[0].notes),
+                    clip_name=item.clips[0].name,
+                )
+                for item in suggestions
+            ],
+            source=compose_service.get_last_source(),
+            fallback_reason=compose_service.get_last_fallback_reason(),
         )
 
     return app

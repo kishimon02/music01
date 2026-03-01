@@ -29,3 +29,7 @@ class MCPJProjectV2(BaseModel):
     builtin_fx_states: dict[str, Any] = Field(default_factory=dict)
     analysis_snapshots: list[dict[str, Any]] = Field(default_factory=list)
     suggestion_history: list[dict[str, Any]] = Field(default_factory=list)
+    composition_settings: dict[str, Any] = Field(default_factory=dict)
+    instrument_assignments: dict[str, Any] = Field(default_factory=dict)
+    midi_clips: dict[str, Any] = Field(default_factory=dict)
+    compose_history: list[dict[str, Any]] = Field(default_factory=list)
