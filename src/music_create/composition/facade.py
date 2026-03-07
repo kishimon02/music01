@@ -24,8 +24,17 @@ class Composition:
     def preview(self, suggestion_id: str) -> Path:
         return self._service.preview(suggestion_id=suggestion_id)
 
-    def apply_to_timeline(self, suggestion_id: str) -> tuple[str, list[str]]:
-        return self._service.apply_to_timeline(suggestion_id=suggestion_id)
+    def apply_to_timeline(
+        self,
+        suggestion_id: str,
+        phrase_start_bar: int | None = None,
+        phrase_end_bar: int | None = None,
+    ) -> tuple[str, list[str]]:
+        return self._service.apply_to_timeline(
+            suggestion_id=suggestion_id,
+            phrase_start_bar=phrase_start_bar,
+            phrase_end_bar=phrase_end_bar,
+        )
 
     def revert(self, command_id: str) -> None:
         self._service.revert(command_id=command_id)
@@ -38,4 +47,3 @@ class Composition:
 
     def get_last_fallback_reason(self) -> str | None:
         return self._service.get_last_fallback_reason()
-

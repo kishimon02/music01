@@ -130,3 +130,34 @@ def test_apply_to_timeline_appends_after_existing_clip() -> None:
     inserted_clip = timeline.clips[clip_ids[0]]
     assert inserted_clip.start_bar == 5
     assert inserted_clip.length_bars == 4
+
+
+def test_apply_to_timeline_phrase_partial_apply() -> None:
+    timeline = TimelineState(bars=32)
+    track = timeline.add_track("Compose Track")
+    service = CompositionService(timeline=timeline, engine_mode="rule-based")
+
+    suggestions = service.suggest(
+        request=ComposeRequest(
+            track_id=track.track_id,
+            part="melody",
+            key="C",
+            scale="major",
+            bars=8,
+            style="pop",
+            grid="1/16",
+            program=0,
+        )
+    )
+
+    _, clip_ids = service.apply_to_timeline(
+        suggestions[0].suggestion_id,
+        phrase_start_bar=3,
+        phrase_end_bar=4,
+    )
+    inserted_clip = timeline.clips[clip_ids[0]]
+    inserted_midi = timeline.midi_clip_data[clip_ids[0]]
+
+    assert inserted_clip.length_bars == 2
+    assert inserted_midi["bars"] == 2
+    assert inserted_midi["name"].endswith("[bar 3-4]")

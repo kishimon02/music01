@@ -34,11 +34,14 @@ try:
     from PySide6.QtCore import QTimer, Qt
     from PySide6.QtGui import QColor
     from PySide6.QtWidgets import (
+        QAbstractItemView,
         QApplication,
         QComboBox,
         QFileDialog,
+        QFrame,
         QFormLayout,
         QGroupBox,
+        QHeaderView,
         QHBoxLayout,
         QLabel,
         QLineEdit,
@@ -60,11 +63,14 @@ try:
     )
 except ImportError:  # pragma: no cover - runtime-only path
     QTimer = object  # type: ignore[assignment]
+    QAbstractItemView = object  # type: ignore[assignment]
     QApplication = None  # type: ignore[assignment]
     QFileDialog = object  # type: ignore[assignment]
     QComboBox = object  # type: ignore[assignment]
+    QFrame = object  # type: ignore[assignment]
     QFormLayout = object  # type: ignore[assignment]
     QGroupBox = object  # type: ignore[assignment]
+    QHeaderView = object  # type: ignore[assignment]
     QHBoxLayout = object  # type: ignore[assignment]
     QLabel = object  # type: ignore[assignment]
     QLineEdit = object  # type: ignore[assignment]
@@ -141,11 +147,218 @@ def pitch_class_guide_text() -> str:
     return "C C# D D# E F F# G G# A A# B"
 
 
+def _studio_one_stylesheet() -> str:
+    return """
+    QWidget#appShell {
+        background: #16181D;
+        color: #E7ECF4;
+    }
+    QFrame#transportBar,
+    QGroupBox {
+        background: #1E232B;
+        border: 1px solid #2D3641;
+        border-radius: 12px;
+    }
+    QFrame#transportBar {
+        border: 1px solid #303945;
+    }
+    QGroupBox {
+        margin-top: 12px;
+        padding-top: 10px;
+    }
+    QGroupBox::title {
+        subcontrol-origin: margin;
+        left: 14px;
+        padding: 0 6px;
+        color: #9AA6B5;
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+    }
+    QLabel#shellTitle {
+        color: #F2F6FB;
+        font-size: 24px;
+        font-weight: 700;
+        letter-spacing: 1px;
+    }
+    QLabel#shellSubtitle {
+        color: #8C98A7;
+        font-size: 11px;
+        letter-spacing: 2px;
+        text-transform: uppercase;
+    }
+    QLabel[shellBadge="true"] {
+        background: #262D36;
+        border: 1px solid #384352;
+        border-radius: 999px;
+        color: #D7E0EC;
+        font-size: 11px;
+        font-weight: 600;
+        padding: 7px 12px;
+        min-width: 120px;
+    }
+    QLabel#transportMetric {
+        color: #C3CEDB;
+        font-size: 12px;
+        font-weight: 600;
+    }
+    QLabel#statusStrip {
+        background: #181C22;
+        border: 1px solid #2B3440;
+        border-radius: 8px;
+        color: #E7ECF4;
+        padding: 8px 12px;
+    }
+    QLabel#panelCaption,
+    QLabel#sectionLabel {
+        color: #9AA6B5;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+    }
+    QLabel#panelHeadline {
+        color: #F0F4FA;
+        font-size: 14px;
+        font-weight: 700;
+    }
+    QTabWidget::pane {
+        border: 1px solid #2D3641;
+        background: #1B2027;
+        border-radius: 10px;
+        top: -1px;
+    }
+    QTabBar::tab {
+        background: #20262F;
+        border: 1px solid #2D3641;
+        border-bottom: none;
+        border-top-left-radius: 8px;
+        border-top-right-radius: 8px;
+        color: #8F9BAA;
+        padding: 8px 14px;
+        margin-right: 4px;
+        min-width: 86px;
+    }
+    QTabBar::tab:selected {
+        background: #262D36;
+        color: #E7ECF4;
+    }
+    QTabBar::tab:hover {
+        color: #F5F8FC;
+    }
+    QLineEdit,
+    QComboBox,
+    QSpinBox,
+    QTextEdit,
+    QListWidget,
+    QTableWidget,
+    QScrollArea {
+        background: #161B21;
+        border: 1px solid #2E3743;
+        border-radius: 8px;
+        color: #E7ECF4;
+        selection-background-color: #355C90;
+        selection-color: #F7FAFD;
+    }
+    QScrollArea {
+        background: transparent;
+    }
+    QLineEdit,
+    QComboBox,
+    QSpinBox {
+        min-height: 32px;
+        padding: 4px 10px;
+    }
+    QTextEdit,
+    QListWidget,
+    QTableWidget {
+        padding: 6px;
+    }
+    QListWidget::item {
+        border-radius: 6px;
+        padding: 6px 8px;
+    }
+    QListWidget::item:selected {
+        background: #314B72;
+    }
+    QPushButton {
+        background: #252C35;
+        border: 1px solid #384454;
+        border-radius: 8px;
+        color: #E7ECF4;
+        font-weight: 600;
+        min-height: 32px;
+        padding: 5px 12px;
+    }
+    QPushButton:hover {
+        background: #2B3540;
+    }
+    QPushButton:pressed {
+        background: #1F252D;
+    }
+    QPushButton[accent="true"] {
+        background: #4D8FF4;
+        border: 1px solid #67A3FF;
+        color: #0D1117;
+    }
+    QPushButton[accent="true"]:hover {
+        background: #62A0FF;
+    }
+    QPushButton[danger="true"] {
+        background: #332721;
+        border: 1px solid #A95B35;
+        color: #FFB892;
+    }
+    QPushButton[danger="true"]:hover {
+        background: #443128;
+    }
+    QSlider::groove:horizontal {
+        background: #222932;
+        border: 1px solid #2F3946;
+        border-radius: 4px;
+        height: 8px;
+    }
+    QSlider::sub-page:horizontal {
+        background: #4D8FF4;
+        border-radius: 4px;
+    }
+    QSlider::handle:horizontal {
+        background: #F4F7FB;
+        border: 1px solid #607286;
+        width: 16px;
+        margin: -5px 0;
+        border-radius: 8px;
+    }
+    QHeaderView::section {
+        background: #20262F;
+        border: 0;
+        border-right: 1px solid #2F3946;
+        border-bottom: 1px solid #2F3946;
+        color: #9FAABA;
+        font-weight: 600;
+        padding: 6px 8px;
+    }
+    QTableWidget {
+        gridline-color: #2B3440;
+    }
+    QSplitter::handle {
+        background: #14181D;
+    }
+    QSplitter::handle:horizontal {
+        width: 5px;
+    }
+    QSplitter::handle:vertical {
+        height: 5px;
+    }
+    """
+
+
 class IntegratedWindow(QMainWindow):
     def __init__(self, mixing: Mixing | None = None) -> None:
         super().__init__()
         self.setWindowTitle("music-create 統合UI")
-        self.resize(1420, 900)
+        self.resize(1500, 940)
+        self.setMinimumSize(1360, 900)
 
         self._waveforms = WaveformRepository()
         self._native_engine: NativeAudioEngine | None = None
@@ -164,7 +377,10 @@ class IntegratedWindow(QMainWindow):
         self._latest_analysis_id: str | None = None
         self._suggestions: dict[str, Suggestion] = {}
         self._compose_suggestions: dict[str, ComposeSuggestion] = {}
+        self._compose_ab_slots: dict[str, str | None] = {"A": None, "B": None}
         self._selected_midi_clip_id: str | None = None
+        self._selected_timeline_bar = 1
+        self._updating_roll_from_model = False
         self._timeline = TimelineState(bars=16)
         self._composition = Composition(service=CompositionService(self._timeline))
         self._init_default_timeline()
@@ -200,58 +416,318 @@ class IntegratedWindow(QMainWindow):
             return samples
         return _demo_signal_provider(track_id)
 
-    def _build_ui(self) -> None:
-        root = QWidget()
-        root_layout = QVBoxLayout(root)
-        root_layout.setContentsMargins(10, 10, 10, 10)
-        root_layout.setSpacing(10)
+    def _mark_button_role(
+        self,
+        button: QPushButton,
+        *,
+        accent: bool = False,
+        danger: bool = False,
+    ) -> QPushButton:
+        button.setProperty("accent", accent)
+        button.setProperty("danger", danger)
+        return button
 
-        self.main_tabs = QTabWidget()
-        self.main_tabs.addTab(self._build_daw_tab(), "DAW")
-        self.main_tabs.addTab(self._build_mixing_tab(), "ミキシング")
-        root_layout.addWidget(self.main_tabs, 2)
+    def _make_shell_badge(self, text: str) -> QLabel:
+        label = QLabel(text)
+        label.setProperty("shellBadge", True)
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        return label
 
-        self.status_label = QLabel("準備完了。")
-        root_layout.addWidget(self.status_label)
-
+    def _make_scroll_tab(self, content: QWidget) -> QScrollArea:
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setWidget(root)
-        self.setCentralWidget(scroll)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setWidget(content)
+        return scroll
 
-    def _build_daw_tab(self) -> QWidget:
+    def _build_ui(self) -> None:
+        root = QWidget()
+        root.setObjectName("appShell")
+        root_layout = QVBoxLayout(root)
+        root_layout.setContentsMargins(12, 12, 12, 12)
+        root_layout.setSpacing(12)
+
+        root_layout.addWidget(self._build_shell_panel())
+
+        self.workspace_splitter = QSplitter(Qt.Orientation.Vertical)
+        self.workspace_splitter.setChildrenCollapsible(False)
+        self.workspace_splitter.addWidget(self._build_workspace_area())
+        self.workspace_splitter.addWidget(self._build_utility_rack())
+        self.workspace_splitter.setSizes([660, 280])
+        root_layout.addWidget(self.workspace_splitter, 1)
+
+        self.setCentralWidget(root)
+        self.setStyleSheet(_studio_one_stylesheet())
+        self._configure_timeline_table()
+        self._on_compose_part_changed()
+        self._sync_phrase_range_with_bars()
+        self._refresh_compose_ab_label()
+        self._refresh_compose_history()
+        self._refresh_history()
+        self._clear_pitch_display()
+        self._refresh_shell_state()
+
+    def _build_shell_panel(self) -> QWidget:
+        panel = QFrame()
+        panel.setObjectName("transportBar")
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(18, 14, 18, 14)
+        layout.setSpacing(10)
+
+        top_row = QHBoxLayout()
+        top_row.setSpacing(10)
+        title_col = QVBoxLayout()
+        title_col.setSpacing(2)
+        self.transport_title_label = QLabel("music-create")
+        self.transport_title_label.setObjectName("shellTitle")
+        self.transport_subtitle_label = QLabel("Production Workspace")
+        self.transport_subtitle_label.setObjectName("shellSubtitle")
+        title_col.addWidget(self.transport_title_label)
+        title_col.addWidget(self.transport_subtitle_label)
+        top_row.addLayout(title_col)
+        top_row.addStretch(1)
+
+        self.playback_badge = self._make_shell_badge("PLAYBACK READY")
+        self.track_badge = self._make_shell_badge("TRACK track-1")
+        self.mix_engine_badge = self._make_shell_badge("MIX RULE / QUICK")
+        self.compose_engine_badge = self._make_shell_badge("COMPOSE RULE / 1/16")
+        for badge in (
+            self.playback_badge,
+            self.track_badge,
+            self.mix_engine_badge,
+            self.compose_engine_badge,
+        ):
+            top_row.addWidget(badge)
+        layout.addLayout(top_row)
+
+        transport_row = QHBoxLayout()
+        transport_row.setSpacing(10)
+        self.playhead_label = QLabel("再生位置 1.00 小節")
+        self.playhead_label.setObjectName("transportMetric")
+        self.playhead_slider = QSlider(Qt.Orientation.Horizontal)
+        self.playhead_slider.setRange(100, self._timeline.bars * 100)
+        self.playhead_slider.setValue(100)
+        self.playhead_slider.valueChanged.connect(self._on_playhead_changed)
+        self.transport_tempo_label = QLabel("120 BPM / 4/4 / 16 bars")
+        self.transport_tempo_label.setObjectName("transportMetric")
+        transport_row.addWidget(self.playhead_label)
+        transport_row.addWidget(self.playhead_slider, 1)
+        transport_row.addWidget(self.transport_tempo_label)
+        layout.addLayout(transport_row)
+
+        self.status_label = QLabel("[--:--:--] 準備完了。")
+        self.status_label.setObjectName("statusStrip")
+        layout.addWidget(self.status_label)
+        return panel
+
+    def _build_workspace_area(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(10)
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.addWidget(self._build_timeline_panel())
-        splitter.addWidget(self._build_compose_panel())
-        splitter.setSizes([920, 500])
-        layout.addWidget(splitter, 1)
+        layout.setSpacing(0)
+
+        self.workspace_body_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.workspace_body_splitter.setChildrenCollapsible(False)
+
+        self.arranger_editor_splitter = QSplitter(Qt.Orientation.Vertical)
+        self.arranger_editor_splitter.setChildrenCollapsible(False)
+        self.arranger_editor_splitter.addWidget(self._build_arranger_panel())
+        self.arranger_editor_splitter.addWidget(self._build_editor_panel())
+        self.arranger_editor_splitter.setSizes([620, 300])
+
+        self.workspace_body_splitter.addWidget(self.arranger_editor_splitter)
+        self.workspace_body_splitter.addWidget(self._build_inspector_panel())
+        self.workspace_body_splitter.setSizes([1140, 360])
+
+        layout.addWidget(self.workspace_body_splitter, 1)
         return page
 
-    def _build_mixing_tab(self) -> QWidget:
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(10)
-
-        layout.addWidget(self._build_control_panel())
-
-        content_splitter = QSplitter(Qt.Orientation.Horizontal)
-        content_splitter.addWidget(self._build_suggestion_panel())
-        content_splitter.addWidget(self._build_history_panel())
-        content_splitter.setSizes([760, 600])
-        layout.addWidget(content_splitter, 1)
-        return page
-
-    def _build_control_panel(self) -> QGroupBox:
-        box = QGroupBox("ミキシング操作")
+    def _build_arranger_panel(self) -> QGroupBox:
+        box = QGroupBox("アレンジャー")
         layout = QVBoxLayout(box)
+        layout.setContentsMargins(14, 18, 14, 14)
+        layout.setSpacing(10)
+
+        toolbar = QHBoxLayout()
+        toolbar.setSpacing(8)
+        self.arranger_context_label = QLabel("Timeline lanes / waveform overview")
+        self.arranger_context_label.setObjectName("panelCaption")
+        toolbar.addWidget(self.arranger_context_label)
+        toolbar.addStretch(1)
+
+        self.add_track_button = QPushButton("トラック追加")
+        self.add_midi_clip_button = QPushButton("MIDI追加")
+        self.add_audio_clip_button = QPushButton("Audio追加")
+        for button in (self.add_track_button, self.add_midi_clip_button, self.add_audio_clip_button):
+            toolbar.addWidget(button)
+        layout.addLayout(toolbar)
+
+        self.waveform_view = WaveformView()
+        self.waveform_view.setMinimumHeight(150)
+        layout.addWidget(self.waveform_view)
+
+        self.timeline_table = QTableWidget(0, self._timeline.bars)
+        self.timeline_table.setObjectName("timelineTable")
+        self.timeline_table.setHorizontalHeaderLabels([str(idx) for idx in range(1, self._timeline.bars + 1)])
+        self.timeline_table.cellClicked.connect(self._on_timeline_cell_clicked)
+        layout.addWidget(self.timeline_table, 1)
+
+        self.add_track_button.clicked.connect(self._on_add_track)
+        self.add_midi_clip_button.clicked.connect(lambda: self._on_add_clip("midi"))
+        self.add_audio_clip_button.clicked.connect(lambda: self._on_add_clip("audio"))
+        return box
+
+    def _build_editor_panel(self) -> QGroupBox:
+        box = QGroupBox("エディタ")
+        layout = QHBoxLayout(box)
+        layout.setContentsMargins(14, 18, 14, 14)
+        layout.setSpacing(12)
+
+        sidebar = QWidget()
+        sidebar_layout = QVBoxLayout(sidebar)
+        sidebar_layout.setContentsMargins(0, 0, 0, 0)
+        sidebar_layout.setSpacing(8)
+
+        self.pitch_class_label = QLabel(f"12音ガイド: {pitch_class_guide_text()}")
+        self.pitch_class_label.setObjectName("panelCaption")
+        self.pitch_clip_label = QLabel("選択MIDIクリップ: なし")
+        self.pitch_clip_label.setObjectName("panelHeadline")
+        sidebar_layout.addWidget(self.pitch_class_label)
+        sidebar_layout.addWidget(self.pitch_clip_label)
+
+        clip_summary_label = QLabel("クリップ概要")
+        clip_summary_label.setObjectName("sectionLabel")
+        sidebar_layout.addWidget(clip_summary_label)
+
+        self.editor_clip_summary = QTextEdit()
+        self.editor_clip_summary.setReadOnly(True)
+        self.editor_clip_summary.setMinimumHeight(130)
+        self.editor_clip_summary.setPlaceholderText("選択クリップの概要をここに表示します。")
+        sidebar_layout.addWidget(self.editor_clip_summary)
+
+        pitch_label = QLabel("音階 / ノート")
+        pitch_label.setObjectName("sectionLabel")
+        sidebar_layout.addWidget(pitch_label)
+
+        self.pitch_detail = QTextEdit()
+        self.pitch_detail.setReadOnly(True)
+        self.pitch_detail.setMinimumHeight(110)
+        self.pitch_detail.setPlaceholderText("MIDIクリップを選択するとノート情報を表示します。")
+        sidebar_layout.addWidget(self.pitch_detail, 1)
+
+        edit_form = QFormLayout()
+        self.midi_edit_instrument_combo = QComboBox()
+        for label, program in composition_instrument_options():
+            self.midi_edit_instrument_combo.addItem(f"{label} ({program})", program)
+        self.midi_transpose_spin = QSpinBox()
+        self.midi_transpose_spin.setRange(-24, 24)
+        self.midi_transpose_spin.setValue(0)
+        edit_form.addRow("楽器", self.midi_edit_instrument_combo)
+        edit_form.addRow("半音シフト", self.midi_transpose_spin)
+        sidebar_layout.addLayout(edit_form)
+
+        edit_buttons = QHBoxLayout()
+        self.midi_apply_edit_button = QPushButton("編集を反映")
+        self.midi_preview_button = QPushButton("選択MIDI試聴")
+        self._mark_button_role(self.midi_apply_edit_button, accent=True)
+        edit_buttons.addWidget(self.midi_apply_edit_button)
+        edit_buttons.addWidget(self.midi_preview_button)
+        sidebar_layout.addLayout(edit_buttons)
+
+        roll_container = QWidget()
+        roll_layout = QVBoxLayout(roll_container)
+        roll_layout.setContentsMargins(0, 0, 0, 0)
+        roll_layout.setSpacing(8)
+        roll_caption = QLabel("Piano Roll")
+        roll_caption.setObjectName("sectionLabel")
+        roll_layout.addWidget(roll_caption)
+        self.piano_roll_view = SimplePianoRollView()
+        self.piano_roll_view.setMinimumHeight(240)
+        roll_layout.addWidget(self.piano_roll_view, 1)
+
+        layout.addWidget(sidebar, 0)
+        layout.addWidget(roll_container, 1)
+
+        self.midi_apply_edit_button.clicked.connect(self._on_apply_midi_edit)
+        self.midi_preview_button.clicked.connect(self._on_preview_selected_midi)
+        return box
+
+    def _build_inspector_panel(self) -> QGroupBox:
+        box = QGroupBox("インスペクタ")
+        layout = QVBoxLayout(box)
+        layout.setContentsMargins(14, 18, 14, 14)
+        layout.setSpacing(10)
+
+        self.inspector_tabs = QTabWidget()
+        self.inspector_tabs.addTab(self._make_scroll_tab(self._build_track_inspector_tab()), "トラック")
+        self.inspector_tabs.addTab(self._make_scroll_tab(self._build_compose_inspector_tab()), "作曲")
+        self.inspector_tabs.addTab(self._make_scroll_tab(self._build_mix_inspector_tab()), "ミックス")
+        layout.addWidget(self.inspector_tabs, 1)
+        return box
+
+    def _build_track_inspector_tab(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(10)
+
+        header = QLabel("Track source / playback")
+        header.setObjectName("panelCaption")
+        layout.addWidget(header)
 
         form = QFormLayout()
         self.track_input = QLineEdit("track-1")
+        form.addRow("トラックID", self.track_input)
+        layout.addLayout(form)
+
+        wav_row = QHBoxLayout()
+        wav_row.setSpacing(8)
+        self.load_wav_button = QPushButton("WAV読込")
+        self.play_wav_button = QPushButton("再生")
+        self.stop_wav_button = QPushButton("停止")
+        self._mark_button_role(self.play_wav_button, accent=True)
+        wav_row.addWidget(self.load_wav_button)
+        wav_row.addWidget(self.play_wav_button)
+        wav_row.addWidget(self.stop_wav_button)
+        layout.addLayout(wav_row)
+
+        self.wav_info_label = QLabel("WAV未読込")
+        self.wav_info_label.setObjectName("transportMetric")
+        layout.addWidget(self.wav_info_label)
+
+        self.track_playback_position_label = QLabel("再生位置: bar 1.00 / 0.00s")
+        self.track_playback_position_label.setObjectName("transportMetric")
+        layout.addWidget(self.track_playback_position_label)
+
+        clip_label = QLabel("選択クリップ")
+        clip_label.setObjectName("sectionLabel")
+        layout.addWidget(clip_label)
+
+        self.track_clip_summary = QTextEdit()
+        self.track_clip_summary.setReadOnly(True)
+        self.track_clip_summary.setMinimumHeight(180)
+        self.track_clip_summary.setPlaceholderText("選択クリップの概要をここに表示します。")
+        layout.addWidget(self.track_clip_summary)
+        layout.addStretch(1)
+
+        self.track_input.editingFinished.connect(self._on_track_input_edited)
+        self.load_wav_button.clicked.connect(self._on_load_wav)
+        self.play_wav_button.clicked.connect(self._on_play_wav)
+        self.stop_wav_button.clicked.connect(self._on_stop_wav)
+        return page
+
+    def _build_mix_inspector_tab(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(10)
+
+        header = QLabel("Mix analysis / suggestion")
+        header.setObjectName("panelCaption")
+        layout.addWidget(header)
+
+        form = QFormLayout()
         self.profile_combo = QComboBox()
         self.profile_combo.addItem("クリーン", "clean")
         self.profile_combo.addItem("パンチ", "punch")
@@ -264,43 +740,13 @@ class IntegratedWindow(QMainWindow):
         self.mode_combo = QComboBox()
         self.mode_combo.addItem("高速（quick）", "quick")
         self.mode_combo.addItem("詳細（full）", "full")
-        form.addRow("トラックID", self.track_input)
         form.addRow("プロファイル", self.profile_combo)
         form.addRow("提案エンジン", self.suggestion_engine_combo)
         form.addRow("解析モード", self.mode_combo)
         layout.addLayout(form)
 
-        wav_row = QHBoxLayout()
-        self.load_wav_button = QPushButton("WAV読込")
-        self.play_wav_button = QPushButton("再生")
-        self.stop_wav_button = QPushButton("停止")
-        wav_row.addWidget(self.load_wav_button)
-        wav_row.addWidget(self.play_wav_button)
-        wav_row.addWidget(self.stop_wav_button)
-        self.wav_info_label = QLabel("WAV未読込")
-        wav_row.addWidget(self.wav_info_label, 1)
-        layout.addLayout(wav_row)
-
-        action_row = QHBoxLayout()
-        self.analyze_button = QPushButton("解析")
-        self.suggest_button = QPushButton("提案")
-        self.preview_button = QPushButton("試聴")
-        self.cancel_preview_button = QPushButton("試聴取消")
-        self.apply_button = QPushButton("適用")
-        self.revert_button = QPushButton("選択を巻き戻し")
-        for btn in [
-            self.analyze_button,
-            self.suggest_button,
-            self.preview_button,
-            self.cancel_preview_button,
-            self.apply_button,
-            self.revert_button,
-        ]:
-            action_row.addWidget(btn)
-        layout.addLayout(action_row)
-
         slider_row = QHBoxLayout()
-        slider_row.addWidget(QLabel("Dry/Wet（試聴量）"))
+        slider_row.addWidget(QLabel("Dry/Wet"))
         self.dry_wet_slider = QSlider(Qt.Orientation.Horizontal)
         self.dry_wet_slider.setRange(0, 100)
         self.dry_wet_slider.setValue(100)
@@ -309,9 +755,30 @@ class IntegratedWindow(QMainWindow):
         slider_row.addWidget(self.dry_wet_label)
         layout.addLayout(slider_row)
 
-        self.load_wav_button.clicked.connect(self._on_load_wav)
-        self.play_wav_button.clicked.connect(self._on_play_wav)
-        self.stop_wav_button.clicked.connect(self._on_stop_wav)
+        action_row = QHBoxLayout()
+        action_row.setSpacing(8)
+        self.analyze_button = QPushButton("解析")
+        self.suggest_button = QPushButton("提案")
+        self.preview_button = QPushButton("試聴")
+        self.cancel_preview_button = QPushButton("試聴取消")
+        self.apply_button = QPushButton("適用")
+        self.revert_button = QPushButton("巻き戻し")
+        self._mark_button_role(self.analyze_button, accent=True)
+        self._mark_button_role(self.suggest_button, accent=True)
+        self._mark_button_role(self.apply_button, accent=True)
+        self._mark_button_role(self.revert_button, danger=True)
+        for btn in (
+            self.analyze_button,
+            self.suggest_button,
+            self.preview_button,
+            self.cancel_preview_button,
+            self.apply_button,
+            self.revert_button,
+        ):
+            action_row.addWidget(btn)
+        layout.addLayout(action_row)
+        layout.addStretch(1)
+
         self.analyze_button.clicked.connect(self._on_analyze)
         self.suggest_button.clicked.connect(self._on_suggest)
         self.preview_button.clicked.connect(self._on_preview)
@@ -320,117 +787,19 @@ class IntegratedWindow(QMainWindow):
         self.revert_button.clicked.connect(self._on_revert)
         self.dry_wet_slider.valueChanged.connect(self._on_dry_wet_changed)
         self.suggestion_engine_combo.currentIndexChanged.connect(self._on_suggestion_engine_changed)
-        return box
+        self.suggestion_engine_combo.currentIndexChanged.connect(self._refresh_shell_state)
+        self.mode_combo.currentIndexChanged.connect(self._refresh_shell_state)
+        return page
 
-    def _build_timeline_panel(self) -> QGroupBox:
-        box = QGroupBox("DAWタイムライン")
-        layout = QVBoxLayout(box)
+    def _build_compose_inspector_tab(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(10)
 
-        transport_row = QHBoxLayout()
-        self.playhead_label = QLabel("再生位置: 1.00 小節")
-        self.playhead_slider = QSlider(Qt.Orientation.Horizontal)
-        self.playhead_slider.setRange(100, self._timeline.bars * 100)
-        self.playhead_slider.setValue(100)
-        self.playhead_slider.valueChanged.connect(self._on_playhead_changed)
-        transport_row.addWidget(self.playhead_label)
-        transport_row.addWidget(self.playhead_slider, 1)
-        layout.addLayout(transport_row)
-
-        self.waveform_view = WaveformView()
-        layout.addWidget(self.waveform_view)
-
-        clip_action_row = QHBoxLayout()
-        self.add_track_button = QPushButton("トラック追加")
-        self.add_midi_clip_button = QPushButton("MIDIクリップ追加")
-        self.add_audio_clip_button = QPushButton("オーディオクリップ追加")
-        clip_action_row.addWidget(self.add_track_button)
-        clip_action_row.addWidget(self.add_midi_clip_button)
-        clip_action_row.addWidget(self.add_audio_clip_button)
-        layout.addLayout(clip_action_row)
-
-        self.timeline_table = QTableWidget(0, self._timeline.bars)
-        self.timeline_table.setHorizontalHeaderLabels([str(idx) for idx in range(1, self._timeline.bars + 1)])
-        self.timeline_table.verticalHeader().setDefaultSectionSize(34)
-        self.timeline_table.cellClicked.connect(self._on_timeline_cell_clicked)
-        layout.addWidget(self.timeline_table, 1)
-
-        pitch_box = QGroupBox("音階表示")
-        pitch_layout = QVBoxLayout(pitch_box)
-        self.pitch_class_label = QLabel(f"12音ガイド: {pitch_class_guide_text()}")
-        self.pitch_clip_label = QLabel("選択MIDIクリップ: なし")
-        self.pitch_detail = QTextEdit()
-        self.pitch_detail.setReadOnly(True)
-        self.pitch_detail.setMinimumHeight(90)
-        self.pitch_detail.setPlaceholderText("MIDIクリップを選択すると音階（ノート名）を表示します。")
-        self.piano_roll_view = SimplePianoRollView()
-        pitch_layout.addWidget(self.pitch_class_label)
-        pitch_layout.addWidget(self.pitch_clip_label)
-        pitch_layout.addWidget(self.pitch_detail)
-        pitch_layout.addWidget(self.piano_roll_view, 1)
-
-        edit_row = QHBoxLayout()
-        edit_row.addWidget(QLabel("楽器:"))
-        self.midi_edit_instrument_combo = QComboBox()
-        for label, program in composition_instrument_options():
-            self.midi_edit_instrument_combo.addItem(f"{label} ({program})", program)
-        edit_row.addWidget(self.midi_edit_instrument_combo)
-        edit_row.addWidget(QLabel("半音シフト:"))
-        self.midi_transpose_spin = QSpinBox()
-        self.midi_transpose_spin.setRange(-24, 24)
-        self.midi_transpose_spin.setValue(0)
-        edit_row.addWidget(self.midi_transpose_spin)
-        self.midi_apply_edit_button = QPushButton("音階/楽器を反映")
-        self.midi_preview_button = QPushButton("選択MIDI試聴")
-        edit_row.addWidget(self.midi_apply_edit_button)
-        edit_row.addWidget(self.midi_preview_button)
-        pitch_layout.addLayout(edit_row)
-
-        layout.addWidget(pitch_box)
-        self._clear_pitch_display()
-
-        self.add_track_button.clicked.connect(self._on_add_track)
-        self.add_midi_clip_button.clicked.connect(lambda: self._on_add_clip("midi"))
-        self.add_audio_clip_button.clicked.connect(lambda: self._on_add_clip("audio"))
-        self.midi_apply_edit_button.clicked.connect(self._on_apply_midi_edit)
-        self.midi_preview_button.clicked.connect(self._on_preview_selected_midi)
-        return box
-
-    def _build_suggestion_panel(self) -> QGroupBox:
-        box = QGroupBox("提案比較")
-        layout = QVBoxLayout(box)
-
-        self.analysis_summary = QTextEdit()
-        self.analysis_summary.setReadOnly(True)
-        self.analysis_summary.setPlaceholderText("解析結果をここに表示します。")
-        layout.addWidget(self.analysis_summary)
-
-        self.suggestion_list = QListWidget()
-        self.suggestion_list.currentItemChanged.connect(self._on_suggestion_selected)
-        layout.addWidget(self.suggestion_list, 1)
-
-        self.suggestion_detail = QTextEdit()
-        self.suggestion_detail.setReadOnly(True)
-        self.suggestion_detail.setPlaceholderText("提案詳細をここに表示します。")
-        layout.addWidget(self.suggestion_detail, 1)
-        return box
-
-    def _build_history_panel(self) -> QGroupBox:
-        box = QGroupBox("適用/巻き戻し履歴")
-        layout = QVBoxLayout(box)
-
-        self.history_list = QListWidget()
-        self.history_list.currentItemChanged.connect(self._on_history_selected)
-        layout.addWidget(self.history_list, 1)
-
-        self.history_detail = QTextEdit()
-        self.history_detail.setReadOnly(True)
-        self.history_detail.setPlaceholderText("履歴詳細をここに表示します。")
-        layout.addWidget(self.history_detail, 1)
-        return box
-
-    def _build_compose_panel(self) -> QGroupBox:
-        box = QGroupBox("作曲支援")
-        layout = QVBoxLayout(box)
+        header = QLabel("Compose generation / timeline insert")
+        header.setObjectName("panelCaption")
+        layout.addWidget(header)
 
         form = QFormLayout()
         self.compose_track_input = QLineEdit("track-1")
@@ -457,6 +826,12 @@ class IntegratedWindow(QMainWindow):
         self.compose_bars_spin = QSpinBox()
         self.compose_bars_spin.setRange(1, 32)
         self.compose_bars_spin.setValue(4)
+        self.compose_phrase_from_spin = QSpinBox()
+        self.compose_phrase_from_spin.setRange(1, 32)
+        self.compose_phrase_from_spin.setValue(1)
+        self.compose_phrase_to_spin = QSpinBox()
+        self.compose_phrase_to_spin.setRange(1, 32)
+        self.compose_phrase_to_spin.setValue(4)
         self.compose_instrument_combo = QComboBox()
         for label, program in composition_instrument_options():
             self.compose_instrument_combo.addItem(f"{label} (Program {program})", program)
@@ -472,53 +847,208 @@ class IntegratedWindow(QMainWindow):
         form.addRow("スタイル", self.compose_style_combo)
         form.addRow("グリッド", self.compose_grid_combo)
         form.addRow("小節数", self.compose_bars_spin)
+        form.addRow("部分開始", self.compose_phrase_from_spin)
+        form.addRow("部分終了", self.compose_phrase_to_spin)
         form.addRow("楽器", self.compose_instrument_combo)
         form.addRow("提案エンジン", self.compose_engine_combo)
         layout.addLayout(form)
 
         action_row = QHBoxLayout()
+        action_row.setSpacing(8)
         self.compose_suggest_button = QPushButton("作曲提案")
         self.compose_preview_button = QPushButton("作曲試聴")
         self.compose_apply_button = QPushButton("タイムライン挿入")
         self.compose_revert_button = QPushButton("挿入を巻き戻し")
-        for btn in [
+        self._mark_button_role(self.compose_suggest_button, accent=True)
+        self._mark_button_role(self.compose_apply_button, accent=True)
+        self._mark_button_role(self.compose_revert_button, danger=True)
+        for btn in (
             self.compose_suggest_button,
             self.compose_preview_button,
             self.compose_apply_button,
             self.compose_revert_button,
-        ]:
+        ):
             action_row.addWidget(btn)
         layout.addLayout(action_row)
-
-        self.compose_suggestion_list = QListWidget()
-        self.compose_suggestion_list.setToolTip("作曲提案候補（スコア順）")
-        layout.addWidget(self.compose_suggestion_list, 1)
-
-        self.compose_detail = QTextEdit()
-        self.compose_detail.setReadOnly(True)
-        self.compose_detail.setPlaceholderText("作曲提案の詳細をここに表示します。")
-        layout.addWidget(self.compose_detail, 1)
-
-        self.compose_history_list = QListWidget()
-        self.compose_history_list.setToolTip("作曲タイムライン挿入履歴")
-        layout.addWidget(self.compose_history_list, 1)
-
-        self.compose_history_detail = QTextEdit()
-        self.compose_history_detail.setReadOnly(True)
-        self.compose_history_detail.setPlaceholderText("作曲挿入履歴の詳細をここに表示します。")
-        layout.addWidget(self.compose_history_detail, 1)
+        layout.addStretch(1)
 
         self.compose_part_combo.currentIndexChanged.connect(self._on_compose_part_changed)
+        self.compose_part_combo.currentIndexChanged.connect(self._refresh_shell_state)
         self.compose_track_input.editingFinished.connect(self._refresh_compose_history)
+        self.compose_track_input.textChanged.connect(self._refresh_shell_state)
+        self.compose_bars_spin.valueChanged.connect(self._sync_phrase_range_with_bars)
+        self.compose_phrase_from_spin.valueChanged.connect(self._normalize_phrase_range)
+        self.compose_phrase_to_spin.valueChanged.connect(self._normalize_phrase_range)
         self.compose_suggest_button.clicked.connect(self._on_compose_suggest)
         self.compose_preview_button.clicked.connect(self._on_compose_preview)
         self.compose_apply_button.clicked.connect(self._on_compose_apply)
         self.compose_revert_button.clicked.connect(self._on_compose_revert)
-        self.compose_suggestion_list.currentItemChanged.connect(self._on_compose_suggestion_selected)
-        self.compose_history_list.currentItemChanged.connect(self._on_compose_history_selected)
-        self._on_compose_part_changed()
-        self._refresh_compose_history()
+        self.compose_engine_combo.currentIndexChanged.connect(self._refresh_shell_state)
+        self.compose_grid_combo.currentIndexChanged.connect(self._refresh_shell_state)
+        return page
+
+    def _build_utility_rack(self) -> QGroupBox:
+        box = QGroupBox("ユーティリティラック")
+        layout = QVBoxLayout(box)
+        layout.setContentsMargins(14, 18, 14, 14)
+        layout.setSpacing(10)
+
+        self.utility_tabs = QTabWidget()
+        self.utility_tabs.addTab(self._build_mix_suggestion_tab(), "ミックス提案")
+        self.utility_tabs.addTab(self._build_mix_history_tab(), "ミックス履歴")
+        self.utility_tabs.addTab(self._build_compose_suggestion_tab(), "作曲提案")
+        self.compose_compare_tab = self._build_compose_compare_tab()
+        self.utility_tabs.addTab(self.compose_compare_tab, "A/B比較")
+        self.compose_history_tab = self._build_compose_history_tab()
+        self.utility_tabs.addTab(self.compose_history_tab, "作曲履歴")
+        layout.addWidget(self.utility_tabs, 1)
         return box
+
+    def _build_mix_suggestion_tab(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(10)
+
+        self.analysis_summary = QTextEdit()
+        self.analysis_summary.setReadOnly(True)
+        self.analysis_summary.setMinimumHeight(120)
+        self.analysis_summary.setMaximumHeight(160)
+        self.analysis_summary.setPlaceholderText("解析結果をここに表示します。")
+        layout.addWidget(self.analysis_summary)
+
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setChildrenCollapsible(False)
+        self.suggestion_list = QListWidget()
+        self.suggestion_list.currentItemChanged.connect(self._on_suggestion_selected)
+        self.suggestion_detail = QTextEdit()
+        self.suggestion_detail.setReadOnly(True)
+        self.suggestion_detail.setPlaceholderText("提案詳細をここに表示します。")
+        splitter.addWidget(self.suggestion_list)
+        splitter.addWidget(self.suggestion_detail)
+        splitter.setSizes([360, 760])
+        layout.addWidget(splitter, 1)
+        return page
+
+    def _build_mix_history_tab(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(10)
+
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setChildrenCollapsible(False)
+        self.history_list = QListWidget()
+        self.history_list.currentItemChanged.connect(self._on_history_selected)
+        self.history_detail = QTextEdit()
+        self.history_detail.setReadOnly(True)
+        self.history_detail.setPlaceholderText("履歴詳細をここに表示します。")
+        splitter.addWidget(self.history_list)
+        splitter.addWidget(self.history_detail)
+        splitter.setSizes([360, 760])
+        layout.addWidget(splitter, 1)
+        return page
+
+    def _build_compose_suggestion_tab(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(10)
+
+        action_row = QHBoxLayout()
+        action_row.setSpacing(8)
+        action_label = QLabel("選択候補を A/B スロットへ送る")
+        action_label.setObjectName("panelCaption")
+        self.compose_set_a_button = QPushButton("選択をA")
+        self.compose_set_b_button = QPushButton("選択をB")
+        self._mark_button_role(self.compose_set_a_button, accent=True)
+        self._mark_button_role(self.compose_set_b_button, accent=True)
+        action_row.addWidget(action_label)
+        action_row.addStretch(1)
+        action_row.addWidget(self.compose_set_a_button)
+        action_row.addWidget(self.compose_set_b_button)
+        layout.addLayout(action_row)
+
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setChildrenCollapsible(False)
+        self.compose_suggestion_list = QListWidget()
+        self.compose_suggestion_list.setToolTip("作曲提案候補（スコア順）")
+        self.compose_detail = QTextEdit()
+        self.compose_detail.setReadOnly(True)
+        self.compose_detail.setPlaceholderText("作曲提案の詳細をここに表示します。")
+        splitter.addWidget(self.compose_suggestion_list)
+        splitter.addWidget(self.compose_detail)
+        splitter.setSizes([360, 760])
+        layout.addWidget(splitter, 1)
+
+        self.compose_set_a_button.clicked.connect(self._on_set_compose_ab_a)
+        self.compose_set_b_button.clicked.connect(self._on_set_compose_ab_b)
+        self.compose_suggestion_list.currentItemChanged.connect(self._on_compose_suggestion_selected)
+        return page
+
+    def _build_compose_compare_tab(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(10)
+
+        header_row = QHBoxLayout()
+        header_row.setSpacing(8)
+        self.compose_ab_label = QLabel("A: 未設定 / B: 未設定")
+        self.compose_ab_label.setObjectName("panelHeadline")
+        self.compose_preview_a_button = QPushButton("A試聴")
+        self.compose_preview_b_button = QPushButton("B試聴")
+        self.compose_compare_button = QPushButton("比較を更新")
+        self._mark_button_role(self.compose_compare_button, accent=True)
+        header_row.addWidget(self.compose_ab_label, 1)
+        header_row.addWidget(self.compose_preview_a_button)
+        header_row.addWidget(self.compose_preview_b_button)
+        header_row.addWidget(self.compose_compare_button)
+        layout.addLayout(header_row)
+
+        self.compose_compare_detail = QTextEdit()
+        self.compose_compare_detail.setReadOnly(True)
+        self.compose_compare_detail.setPlaceholderText("A/B比較結果をここに表示します。")
+        layout.addWidget(self.compose_compare_detail, 1)
+
+        self.compose_preview_a_button.clicked.connect(self._on_compose_preview_a)
+        self.compose_preview_b_button.clicked.connect(self._on_compose_preview_b)
+        self.compose_compare_button.clicked.connect(self._on_compose_compare_ab)
+        return page
+
+    def _build_compose_history_tab(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(10)
+
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setChildrenCollapsible(False)
+        self.compose_history_list = QListWidget()
+        self.compose_history_list.setToolTip("作曲タイムライン挿入履歴")
+        self.compose_history_detail = QTextEdit()
+        self.compose_history_detail.setReadOnly(True)
+        self.compose_history_detail.setPlaceholderText("作曲挿入履歴の詳細をここに表示します。")
+        splitter.addWidget(self.compose_history_list)
+        splitter.addWidget(self.compose_history_detail)
+        splitter.setSizes([360, 760])
+        layout.addWidget(splitter, 1)
+
+        self.compose_history_list.currentItemChanged.connect(self._on_compose_history_selected)
+        return page
+
+    def _configure_timeline_table(self) -> None:
+        self.timeline_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self.timeline_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.timeline_table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.timeline_table.setAlternatingRowColors(False)
+        self.timeline_table.setShowGrid(True)
+        self.timeline_table.setWordWrap(False)
+        self.timeline_table.verticalHeader().setDefaultSectionSize(42)
+        self.timeline_table.verticalHeader().setMinimumWidth(180)
+        self.timeline_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.timeline_table.horizontalHeader().setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.timeline_table.horizontalHeader().setMinimumSectionSize(56)
 
     def _sync_track_controls_from_timeline(self) -> None:
         current = self.track_input.text().strip()
@@ -534,6 +1064,84 @@ class IntegratedWindow(QMainWindow):
             compose_current = self.compose_track_input.text().strip()
             if compose_current not in self._timeline.tracks:
                 self.compose_track_input.setText(self.track_input.text().strip())
+        self._selected_timeline_bar = min(max(self._selected_timeline_bar, 1), self._timeline.bars)
+        self._refresh_shell_state()
+
+    def _on_track_input_edited(self) -> None:
+        track_id = self._current_track_id()
+        if hasattr(self, "compose_track_input") and track_id in self._timeline.tracks:
+            self.compose_track_input.setText(track_id)
+        self._refresh_wav_info()
+        self._refresh_history()
+        self._paint_playhead()
+        self._update_pitch_display(track_id=track_id, bar=self._selected_timeline_bar)
+        self._refresh_shell_state()
+
+    def _set_selected_clip_summary(
+        self,
+        clip: TimelineClip | None,
+        raw: dict[str, object] | None = None,
+    ) -> None:
+        if clip is None:
+            text = "選択クリップ: なし\nタイムラインでクリップを選択すると概要を表示します。"
+        else:
+            lines = [
+                f"選択クリップ: {clip.name}",
+                f"タイプ: {'MIDI' if clip.clip_type == 'midi' else 'Audio'}",
+                f"トラック: {clip.track_id}",
+                f"範囲: bar {clip.start_bar}-{clip.end_bar} ({clip.length_bars} bars)",
+            ]
+            if clip.clip_type == "midi" and isinstance(raw, dict):
+                notes = raw.get("notes")
+                note_count = len(notes) if isinstance(notes, list) else 0
+                lines.append(f"ノート数: {note_count}")
+                grid = raw.get("grid")
+                if isinstance(grid, str):
+                    lines.append(f"グリッド: {grid}")
+                program = raw.get("program")
+                if bool(raw.get("is_drum")):
+                    lines.append("楽器: ドラム")
+                elif isinstance(program, int):
+                    lines.append(f"楽器Program: {program}")
+            elif clip.clip_type == "audio":
+                wav = self._waveforms.get_item(clip.track_id)
+                if wav is not None:
+                    lines.append(f"WAV: {wav.path.name}")
+                    lines.append(f"長さ: {wav.duration_sec:.2f}s @ {wav.sample_rate}Hz")
+            text = "\n".join(lines)
+
+        if hasattr(self, "editor_clip_summary"):
+            self.editor_clip_summary.setPlainText(text)
+        if hasattr(self, "track_clip_summary"):
+            self.track_clip_summary.setPlainText(text)
+
+    def _refresh_playback_position_labels(self) -> None:
+        self.playhead_label.setText(f"再生位置 {self._timeline.playhead_bar:.2f} 小節")
+        elapsed = self._bar_to_seconds(self._timeline.playhead_bar)
+        if hasattr(self, "track_playback_position_label"):
+            self.track_playback_position_label.setText(
+                f"再生位置: bar {self._timeline.playhead_bar:.2f} / {elapsed:.2f}s"
+            )
+
+    def _refresh_shell_state(self, _value: object | None = None) -> None:
+        if not hasattr(self, "playback_badge"):
+            return
+        mix_engine = "LLM" if self._current_suggestion_engine() == "llm-based" else "RULE"
+        mix_mode = self._current_mode().upper()
+        compose_engine = "LLM" if self._current_compose_engine() == "llm-based" else "RULE"
+        current_track = self._current_track_id()
+        if self._playback_started_at is not None and self._playback_track_id is not None:
+            playback_text = f"PLAYING {self._playback_track_id} {self._playback_elapsed_sec:0.1f}s"
+        else:
+            playback_text = "PLAYBACK READY"
+        self.playback_badge.setText(playback_text)
+        self.track_badge.setText(f"TRACK {current_track}")
+        self.mix_engine_badge.setText(f"MIX {mix_engine} / {mix_mode}")
+        self.compose_engine_badge.setText(f"COMPOSE {compose_engine} / {self._current_compose_grid()}")
+        self.transport_tempo_label.setText(
+            f"{self._tempo_bpm:.0f} BPM / {self._beats_per_bar:.0f}/4 / {self._timeline.bars} bars"
+        )
+        self._refresh_playback_position_labels()
 
     def _refresh_timeline_view(self) -> None:
         tracks = self._timeline.tracks_in_order()
@@ -542,10 +1150,17 @@ class IntegratedWindow(QMainWindow):
         self.timeline_table.setHorizontalHeaderLabels([str(idx) for idx in range(1, self._timeline.bars + 1)])
 
         for row, track in enumerate(tracks):
-            self.timeline_table.setVerticalHeaderItem(row, QTableWidgetItem(f"{track.name} ({track.track_id})"))
+            header_item = QTableWidgetItem(f"{track.name} ({track.track_id})")
+            header_item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            self.timeline_table.setVerticalHeaderItem(row, header_item)
             for col in range(self._timeline.bars):
-                cell = QTableWidgetItem("")
+                cell = self.timeline_table.item(row, col)
+                if cell is None:
+                    cell = QTableWidgetItem("")
+                cell.setText("")
+                cell.setToolTip("")
                 cell.setFlags(cell.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                cell.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
                 self.timeline_table.setItem(row, col, cell)
 
             for clip in self._timeline.clips_for_track(track.track_id):
@@ -553,28 +1168,55 @@ class IntegratedWindow(QMainWindow):
 
         self._paint_playhead()
         if hasattr(self, "pitch_detail"):
-            self._clear_pitch_display()
+            self._update_pitch_display(track_id=self._current_track_id(), bar=self._selected_timeline_bar)
 
     def _paint_clip_on_row(self, row: int, clip: TimelineClip) -> None:
-        color = QColor(77, 145, 244) if clip.clip_type == "midi" else QColor(244, 145, 77)
         for bar in range(clip.start_bar, clip.end_bar + 1):
             col = bar - 1
             item = self.timeline_table.item(row, col)
             if item is None:
                 continue
-            item.setBackground(color)
             if bar == clip.start_bar:
                 item.setText(f"{clip.name} ({clip.clip_type})")
+            item.setToolTip(f"{clip.name} | {clip.clip_type} | bar {clip.start_bar}-{clip.end_bar}")
 
     def _paint_playhead(self) -> None:
         bar = int(round(self._timeline.playhead_bar))
         bar = min(max(bar, 1), self._timeline.bars)
-        self.playhead_label.setText(f"再生位置: {self._timeline.playhead_bar:.2f} 小節")
-        self.timeline_table.clearSelection()
-        for row in range(self.timeline_table.rowCount()):
-            item = self.timeline_table.item(row, bar - 1)
-            if item is not None:
-                item.setSelected(True)
+        self._refresh_playback_position_labels()
+        current_track_id = self._current_track_id()
+        for row, track in enumerate(self._timeline.tracks_in_order()):
+            selected_row = track.track_id == current_track_id
+            header_item = self.timeline_table.verticalHeaderItem(row)
+            if header_item is not None:
+                header_item.setBackground(QColor(41, 51, 64) if selected_row else QColor(32, 38, 47))
+                header_item.setForeground(QColor(231, 236, 244) if selected_row else QColor(154, 166, 181))
+            for col in range(self._timeline.bars):
+                item = self.timeline_table.item(row, col)
+                if item is None:
+                    continue
+                clip = self._find_clip_at(track.track_id, col + 1)
+                is_playhead = (col + 1) == bar
+                if clip is None:
+                    background = QColor(28, 32, 39) if selected_row else QColor(24, 28, 34)
+                    if is_playhead:
+                        background = QColor(58, 43, 34) if selected_row else QColor(48, 36, 29)
+                    item.setForeground(QColor(118, 128, 141))
+                    item.setText("")
+                else:
+                    if clip.clip_type == "midi":
+                        background = QColor(77, 143, 244) if clip.start_bar == col + 1 else QColor(63, 111, 186)
+                    else:
+                        background = QColor(217, 122, 54) if clip.start_bar == col + 1 else QColor(166, 90, 40)
+                    if selected_row:
+                        background = background.lighter(112)
+                    if is_playhead:
+                        background = background.lighter(118)
+                    item.setForeground(QColor(240, 244, 250))
+                item.setBackground(background)
+                font = item.font()
+                font.setBold(clip is not None and clip.start_bar == col + 1)
+                item.setFont(font)
         self._refresh_waveform_playhead()
 
     def _on_playhead_changed(self, value: int) -> None:
@@ -627,15 +1269,20 @@ class IntegratedWindow(QMainWindow):
         item = self._waveforms.get_item(track_id)
         if item is None:
             self.waveform_view.clear()
+            self._refresh_shell_state()
             return
         self.waveform_view.set_waveform(item.samples, item.duration_sec)
         self.waveform_view.set_playhead_ratio(self._playhead_ratio_for_track(track_id))
+        self._refresh_shell_state()
 
-    def _clear_pitch_display(self) -> None:
+    def _clear_pitch_display(self, keep_clip_summary: bool = False) -> None:
         self._selected_midi_clip_id = None
         self.pitch_clip_label.setText("選択MIDIクリップ: なし")
         self.pitch_detail.setPlainText("音階: -")
         self.piano_roll_view.clear()
+        self.piano_roll_view.set_editable(False, None)
+        if not keep_clip_summary:
+            self._set_selected_clip_summary(None)
         self._set_midi_edit_enabled(False)
 
     def _set_midi_edit_enabled(self, enabled: bool, is_drum: bool = False) -> None:
@@ -695,12 +1342,17 @@ class IntegratedWindow(QMainWindow):
 
     def _update_pitch_display(self, track_id: str, bar: int) -> None:
         clip = self._find_clip_at(track_id, bar)
-        if clip is None or clip.clip_type != "midi":
+        raw = self._timeline.midi_clip_data.get(clip.clip_id, {}) if clip is not None else None
+        if clip is None:
             self._clear_pitch_display()
             return
+        if clip.clip_type != "midi":
+            self._set_selected_clip_summary(clip, raw if isinstance(raw, dict) else None)
+            self._clear_pitch_display(keep_clip_summary=True)
+            return
         self._selected_midi_clip_id = clip.clip_id
-        raw = self._timeline.midi_clip_data.get(clip.clip_id, {})
         is_drum = bool(raw.get("is_drum")) if isinstance(raw, dict) else False
+        self._set_selected_clip_summary(clip, raw if isinstance(raw, dict) else None)
         self._set_midi_edit_enabled(True, is_drum=is_drum)
         self.midi_transpose_spin.setValue(0)
         if isinstance(raw, dict):
@@ -715,20 +1367,26 @@ class IntegratedWindow(QMainWindow):
                 max(note["start_tick"] + note["length_tick"] for note in note_events),
                 max(1, bars) * max(1, ticks_per_beat) * 4,
             )
-            self.piano_roll_view.set_notes(
-                [
-                    PianoRollNote(
-                        start_tick=note["start_tick"],
-                        length_tick=note["length_tick"],
-                        pitch=note["pitch"],
-                        velocity=note["velocity"],
-                    )
-                    for note in note_events
-                ],
-                total_ticks=total_ticks,
-            )
+            self._updating_roll_from_model = True
+            try:
+                self.piano_roll_view.set_notes(
+                    [
+                        PianoRollNote(
+                            start_tick=note["start_tick"],
+                            length_tick=note["length_tick"],
+                            pitch=note["pitch"],
+                            velocity=note["velocity"],
+                        )
+                        for note in note_events
+                    ],
+                    total_ticks=total_ticks,
+                )
+            finally:
+                self._updating_roll_from_model = False
+            self.piano_roll_view.set_editable(True, self._on_piano_roll_notes_changed)
         else:
             self.piano_roll_view.clear()
+            self.piano_roll_view.set_editable(False, None)
 
         note_names = self._clip_note_names(clip)
         self.pitch_clip_label.setText(f"選択MIDIクリップ: {clip.name} ({clip.clip_id[:8]})")
@@ -743,6 +1401,45 @@ class IntegratedWindow(QMainWindow):
                 ]
             )
         )
+
+    def _on_piano_roll_notes_changed(self, notes: list[PianoRollNote]) -> None:
+        if self._updating_roll_from_model:
+            return
+        selected = self._selected_midi_clip()
+        if selected is None:
+            return
+        clip, raw = selected
+        notes_raw = raw.get("notes")
+        if not isinstance(notes_raw, list):
+            return
+        if len(notes_raw) != len(notes):
+            # Fallback: replace entirely when event count differs.
+            channel = 9 if bool(raw.get("is_drum")) else 0
+            raw["notes"] = [
+                {
+                    "start_tick": int(note.start_tick),
+                    "length_tick": int(max(note.length_tick, 1)),
+                    "pitch": int(min(max(note.pitch, 0), 127)),
+                    "velocity": int(min(max(note.velocity, 1), 127)),
+                    "channel": channel,
+                }
+                for note in notes
+            ]
+        else:
+            for idx, note in enumerate(notes):
+                item = notes_raw[idx]
+                if not isinstance(item, dict):
+                    item = {}
+                    notes_raw[idx] = item
+                item["start_tick"] = int(max(note.start_tick, 0))
+                item["length_tick"] = int(max(note.length_tick, 1))
+                item["pitch"] = int(min(max(note.pitch, 0), 127))
+                item["velocity"] = int(min(max(note.velocity, 1), 127))
+                if "channel" not in item:
+                    item["channel"] = 9 if bool(raw.get("is_drum")) else 0
+
+        self._timeline.midi_clip_data[clip.clip_id] = raw
+        self._set_status("ノートドラッグ編集を反映しました。")
 
     def _selected_midi_clip(self) -> tuple[TimelineClip, dict[str, object]] | None:
         clip_id = self._selected_midi_clip_id
@@ -857,11 +1554,14 @@ class IntegratedWindow(QMainWindow):
         if "(" not in text or not text.endswith(")"):
             return
         track_id = text[text.find("(") + 1 : -1]
+        self._selected_timeline_bar = column + 1
         self.track_input.setText(track_id)
         if hasattr(self, "compose_track_input"):
             self.compose_track_input.setText(track_id)
             self._refresh_compose_history()
         self._refresh_wav_info()
+        self._refresh_history()
+        self._paint_playhead()
         self._update_pitch_display(track_id=track_id, bar=column + 1)
         self._set_status(f"選択トラックを {track_id} に変更しました。")
 
@@ -965,6 +1665,7 @@ class IntegratedWindow(QMainWindow):
         self._set_playhead_bar(1.0)
         if self._playback_timer is not None:
             self._playback_timer.start()
+        self._refresh_shell_state()
 
     def _stop_playback_sync(self) -> None:
         self._playback_track_id = None
@@ -973,6 +1674,7 @@ class IntegratedWindow(QMainWindow):
         self._playback_elapsed_sec = 0.0
         if self._playback_timer is not None:
             self._playback_timer.stop()
+        self._refresh_shell_state()
 
     def _on_playback_tick(self) -> None:
         if self._playback_started_at is None:
@@ -1019,12 +1721,14 @@ class IntegratedWindow(QMainWindow):
         if item is None:
             self.wav_info_label.setText("WAV未読込")
             self.waveform_view.clear()
+            self._refresh_shell_state()
             return
         self.wav_info_label.setText(f"{item.path.name} | {item.sample_rate}Hz | {item.duration_sec:.2f}s")
         self._refresh_waveform_view()
 
     def _on_dry_wet_changed(self, value: int) -> None:
         self.dry_wet_label.setText(f"{value}%")
+        self._refresh_shell_state()
 
     def _current_track_id(self) -> str:
         track_id = self.track_input.text().strip()
@@ -1082,6 +1786,32 @@ class IntegratedWindow(QMainWindow):
     def _on_compose_part_changed(self, _index: int | None = None) -> None:
         is_drum = self._current_compose_part() == "drum"
         self.compose_instrument_combo.setEnabled(not is_drum)
+        self._refresh_shell_state()
+
+    def _sync_phrase_range_with_bars(self, _value: int | None = None) -> None:
+        bars = int(self.compose_bars_spin.value())
+        self.compose_phrase_from_spin.setMaximum(bars)
+        self.compose_phrase_to_spin.setMaximum(bars)
+        if self.compose_phrase_from_spin.value() > bars:
+            self.compose_phrase_from_spin.setValue(bars)
+        if self.compose_phrase_to_spin.value() > bars:
+            self.compose_phrase_to_spin.setValue(bars)
+        self._normalize_phrase_range()
+
+    def _normalize_phrase_range(self, _value: int | None = None) -> None:
+        start = int(self.compose_phrase_from_spin.value())
+        end = int(self.compose_phrase_to_spin.value())
+        if start > end:
+            self.compose_phrase_to_spin.blockSignals(True)
+            self.compose_phrase_to_spin.setValue(start)
+            self.compose_phrase_to_spin.blockSignals(False)
+
+    def _phrase_range(self) -> tuple[int, int]:
+        start = int(self.compose_phrase_from_spin.value())
+        end = int(self.compose_phrase_to_spin.value())
+        if start > end:
+            start, end = end, start
+        return start, end
 
     def _selected_compose_suggestion_id(self) -> str | None:
         item = self.compose_suggestion_list.currentItem()
@@ -1089,6 +1819,82 @@ class IntegratedWindow(QMainWindow):
             return None
         data = item.data(Qt.ItemDataRole.UserRole)
         return data if isinstance(data, str) else None
+
+    def _refresh_compose_ab_label(self) -> None:
+        a = self._compose_ab_slots["A"]
+        b = self._compose_ab_slots["B"]
+        self.compose_ab_label.setText(
+            f"A: {(a[:8] if isinstance(a, str) else '未設定')} / "
+            f"B: {(b[:8] if isinstance(b, str) else '未設定')}"
+        )
+
+    def _set_compose_ab(self, slot: str) -> None:
+        suggestion_id = self._selected_compose_suggestion_id()
+        if suggestion_id is None:
+            self._show_error("先に作曲提案を1つ選択してください。")
+            return
+        self._compose_ab_slots[slot] = suggestion_id
+        self._refresh_compose_ab_label()
+        self._set_status(f"{slot}に提案 {suggestion_id[:8]} を設定しました。")
+
+    def _on_set_compose_ab_a(self) -> None:
+        self._set_compose_ab("A")
+
+    def _on_set_compose_ab_b(self) -> None:
+        self._set_compose_ab("B")
+
+    def _preview_compose_suggestion_by_id(self, suggestion_id: str) -> None:
+        try:
+            preview_wav = self._composition.preview(suggestion_id=suggestion_id)
+        except Exception as exc:
+            self._show_error(f"作曲試聴WAV生成に失敗しました: {exc}")
+            return
+        if self._native_engine is None or not self._native_engine.is_available():
+            self._set_status(f"作曲試聴WAVを生成しました: {preview_wav}")
+            return
+        try:
+            self._native_engine.stop_playback()
+            self._stop_playback_sync()
+            ok = self._native_engine.play_file(preview_wav)
+        except Exception as exc:
+            self._show_error(f"作曲試聴の再生に失敗しました: {exc}")
+            return
+        if not ok:
+            self._show_error("作曲試聴の再生に失敗しました。")
+            return
+        track_id = self._current_compose_track_id()
+        self.track_input.setText(track_id)
+        self._start_playback_sync(track_id=track_id, duration_sec=_wav_duration_sec(preview_wav))
+        self._set_status(f"作曲試聴を開始しました: {preview_wav.name}")
+
+    def _on_compose_preview_a(self) -> None:
+        suggestion_id = self._compose_ab_slots["A"]
+        if not isinstance(suggestion_id, str):
+            self._show_error("Aが未設定です。")
+            return
+        self._preview_compose_suggestion_by_id(suggestion_id)
+
+    def _on_compose_preview_b(self) -> None:
+        suggestion_id = self._compose_ab_slots["B"]
+        if not isinstance(suggestion_id, str):
+            self._show_error("Bが未設定です。")
+            return
+        self._preview_compose_suggestion_by_id(suggestion_id)
+
+    def _on_compose_compare_ab(self) -> None:
+        a_id = self._compose_ab_slots["A"]
+        b_id = self._compose_ab_slots["B"]
+        if not isinstance(a_id, str) or not isinstance(b_id, str):
+            self._show_error("A/Bの両方を設定してください。")
+            return
+        a = self._compose_suggestions.get(a_id)
+        b = self._compose_suggestions.get(b_id)
+        if a is None or b is None:
+            self._show_error("A/B比較対象が現在の候補に存在しません。再提案してください。")
+            return
+        self.compose_compare_detail.setPlainText(_compose_ab_compare_text(a, b))
+        self.utility_tabs.setCurrentWidget(self.compose_compare_tab)
+        self._set_status("A/B比較を更新しました。")
 
     def _selected_compose_command_id(self) -> str | None:
         item = self.compose_history_list.currentItem()
@@ -1119,8 +1925,11 @@ class IntegratedWindow(QMainWindow):
             return
 
         self._compose_suggestions = {item.suggestion_id: item for item in suggestions}
+        self._compose_ab_slots = {"A": None, "B": None}
+        self._refresh_compose_ab_label()
         self.compose_suggestion_list.clear()
         self.compose_detail.clear()
+        self.compose_compare_detail.clear()
         for index, suggestion in enumerate(suggestions, start=1):
             note_count = len(suggestion.clips[0].notes) if suggestion.clips else 0
             line = (
@@ -1132,9 +1941,18 @@ class IntegratedWindow(QMainWindow):
             self.compose_suggestion_list.addItem(item)
         if self.compose_suggestion_list.count() > 0:
             self.compose_suggestion_list.setCurrentRow(0)
+        if self.compose_suggestion_list.count() > 1:
+            a_item = self.compose_suggestion_list.item(0)
+            b_item = self.compose_suggestion_list.item(1)
+            a_id = a_item.data(Qt.ItemDataRole.UserRole) if a_item is not None else None
+            b_id = b_item.data(Qt.ItemDataRole.UserRole) if b_item is not None else None
+            self._compose_ab_slots["A"] = a_id if isinstance(a_id, str) else None
+            self._compose_ab_slots["B"] = b_id if isinstance(b_id, str) else None
+            self._refresh_compose_ab_label()
 
         source = self._composition.get_last_source()
         fallback = self._composition.get_last_fallback_reason()
+        self.utility_tabs.setCurrentIndex(2)
         if fallback:
             self._set_status(f"作曲提案{len(suggestions)}件: {_compose_source_label(source)} / 理由: {fallback}")
         else:
@@ -1158,6 +1976,14 @@ class IntegratedWindow(QMainWindow):
             return
 
         clip = suggestion.clips[0] if suggestion.clips else None
+        bars = suggestion.request.bars
+        self.compose_phrase_from_spin.setMaximum(bars)
+        self.compose_phrase_to_spin.setMaximum(bars)
+        if self.compose_phrase_from_spin.value() > bars:
+            self.compose_phrase_from_spin.setValue(bars)
+        if self.compose_phrase_to_spin.value() > bars:
+            self.compose_phrase_to_spin.setValue(bars)
+        self._normalize_phrase_range()
         note_count = len(clip.notes) if clip else 0
         lines = [
             f"提案ID: {suggestion.suggestion_id}",
@@ -1182,36 +2008,20 @@ class IntegratedWindow(QMainWindow):
         if suggestion_id is None:
             self._show_error("先に作曲提案を1つ選択してください。")
             return
-        try:
-            preview_wav = self._composition.preview(suggestion_id=suggestion_id)
-        except Exception as exc:
-            self._show_error(f"作曲試聴WAV生成に失敗しました: {exc}")
-            return
-        if self._native_engine is None or not self._native_engine.is_available():
-            self._set_status(f"作曲試聴WAVを生成しました: {preview_wav}")
-            return
-        try:
-            self._native_engine.stop_playback()
-            self._stop_playback_sync()
-            ok = self._native_engine.play_file(preview_wav)
-        except Exception as exc:
-            self._show_error(f"作曲試聴の再生に失敗しました: {exc}")
-            return
-        if not ok:
-            self._show_error("作曲試聴の再生に失敗しました。")
-            return
-        track_id = self._current_compose_track_id()
-        self.track_input.setText(track_id)
-        self._start_playback_sync(track_id=track_id, duration_sec=_wav_duration_sec(preview_wav))
-        self._set_status(f"作曲試聴を開始しました: {preview_wav.name}")
+        self._preview_compose_suggestion_by_id(suggestion_id)
 
     def _on_compose_apply(self) -> None:
         suggestion_id = self._selected_compose_suggestion_id()
         if suggestion_id is None:
             self._show_error("先に作曲提案を1つ選択してください。")
             return
+        phrase_start, phrase_end = self._phrase_range()
         try:
-            command_id, clip_ids = self._composition.apply_to_timeline(suggestion_id=suggestion_id)
+            command_id, clip_ids = self._composition.apply_to_timeline(
+                suggestion_id=suggestion_id,
+                phrase_start_bar=phrase_start,
+                phrase_end_bar=phrase_end,
+            )
         except Exception as exc:
             self._show_error(f"タイムライン挿入に失敗しました: {exc}")
             return
@@ -1222,12 +2032,18 @@ class IntegratedWindow(QMainWindow):
             first_clip_id = clip_ids[0]
             inserted = self._timeline.clips.get(first_clip_id)
             if inserted is not None:
+                self._selected_timeline_bar = inserted.start_bar
                 self.track_input.setText(inserted.track_id)
                 if hasattr(self, "compose_track_input"):
                     self.compose_track_input.setText(inserted.track_id)
                 self._update_pitch_display(track_id=inserted.track_id, bar=inserted.start_bar)
-                self.main_tabs.setCurrentIndex(0)
-        self._set_status(f"作曲クリップを{len(clip_ids)}件挿入しました。コマンドID={command_id}")
+                self.inspector_tabs.setCurrentIndex(0)
+                self._paint_playhead()
+        self.utility_tabs.setCurrentWidget(self.compose_history_tab)
+        self._set_status(
+            f"作曲クリップを{len(clip_ids)}件挿入しました（bar {phrase_start}-{phrase_end}）。"
+            f"コマンドID={command_id}"
+        )
 
     def _on_compose_revert(self) -> None:
         command_id = self._selected_compose_command_id()
@@ -1241,6 +2057,7 @@ class IntegratedWindow(QMainWindow):
             return
         self._refresh_timeline_view()
         self._refresh_compose_history()
+        self.utility_tabs.setCurrentWidget(self.compose_history_tab)
         self._set_status(f"作曲挿入を巻き戻しました。コマンドID={command_id}")
 
     def _refresh_compose_history(self) -> None:
@@ -1363,6 +2180,7 @@ class IntegratedWindow(QMainWindow):
             self._set_status(f"{len(suggestions)}件生成: {source_label} / 理由: {fallback}")
         else:
             self._set_status(f"{len(suggestions)}件の提案候補を生成しました（{source_label}）。")
+        self.utility_tabs.setCurrentIndex(0)
 
     def _on_suggestion_selected(self, current: QListWidgetItem | None, _prev: QListWidgetItem | None) -> None:
         if current is None:
@@ -1424,6 +2242,7 @@ class IntegratedWindow(QMainWindow):
             self._show_error(str(exc))
             return
         self._refresh_history()
+        self.utility_tabs.setCurrentIndex(1)
         self._set_status(f"提案を適用しました。コマンドID={command_id}")
 
     def _on_revert(self) -> None:
@@ -1438,6 +2257,7 @@ class IntegratedWindow(QMainWindow):
             self._show_error(str(exc))
             return
         self._refresh_history()
+        self.utility_tabs.setCurrentIndex(1)
         self._set_status(f"巻き戻ししました。コマンドID={command_id}")
 
     def _refresh_history(self) -> None:
@@ -1488,6 +2308,7 @@ class IntegratedWindow(QMainWindow):
     def _set_status(self, message: str) -> None:
         now = datetime.now().strftime("%H:%M:%S")
         self.status_label.setText(f"[{now}] {message}")
+        self._refresh_shell_state()
 
 
 def _format_history_line(command: SuggestionCommand) -> str:
@@ -1524,6 +2345,26 @@ def _format_compose_history_line(command: ComposeCommand) -> str:
     stamp = command.created_at.strftime("%H:%M:%S")
     state = "適用中" if command.applied else "巻き戻し済み"
     return f"{stamp} | {command.command_id[:8]} | {state} | {command.suggestion_id[:8]}"
+
+
+def _compose_ab_compare_text(a: ComposeSuggestion, b: ComposeSuggestion) -> str:
+    a_clip = a.clips[0] if a.clips else None
+    b_clip = b.clips[0] if b.clips else None
+    a_notes = len(a_clip.notes) if a_clip else 0
+    b_notes = len(b_clip.notes) if b_clip else 0
+    a_program = a.request.program if a.request.program is not None else "drum"
+    b_program = b.request.program if b.request.program is not None else "drum"
+    return "\n".join(
+        [
+            "A/B比較",
+            f"A: {a.suggestion_id[:8]} | score={a.score:.4f} | notes={a_notes} | bars={a.request.bars} | program={a_program} | source={a.source}",
+            f"B: {b.suggestion_id[:8]} | score={b.score:.4f} | notes={b_notes} | bars={b.request.bars} | program={b_program} | source={b.source}",
+            f"score差 (A-B): {a.score - b.score:+.4f}",
+            f"note差 (A-B): {a_notes - b_notes:+d}",
+            f"A理由: {a.reason}",
+            f"B理由: {b.reason}",
+        ]
+    )
 
 
 def _wav_duration_sec(path: Path) -> float:

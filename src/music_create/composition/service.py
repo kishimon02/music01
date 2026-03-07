@@ -6,7 +6,7 @@ import tempfile
 from pathlib import Path
 
 from music_create.composition.llm import CompositionLLMEngine
-from music_create.composition.models import ComposeCommand, ComposeMode, ComposeRequest, ComposeSuggestion
+from music_create.composition.models import ComposeCommand, ComposeMode, ComposeRequest, ComposeSuggestion, MidiClipDraft, MidiNoteEvent
 from music_create.composition.quantize import normalize_grid
 from music_create.composition.rules import generate_rule_suggestions
 from music_create.composition.synth import render_clip_to_wav
@@ -75,7 +75,12 @@ class CompositionService:
         out = self._preview_dir / f"{suggestion.suggestion_id}.wav"
         return render_clip_to_wav(clip, out)
 
-    def apply_to_timeline(self, suggestion_id: str) -> tuple[str, list[str]]:
+    def apply_to_timeline(
+        self,
+        suggestion_id: str,
+        phrase_start_bar: int | None = None,
+        phrase_end_bar: int | None = None,
+    ) -> tuple[str, list[str]]:
         suggestion = self._get_suggestion(suggestion_id)
         track_id = suggestion.request.track_id
         self._timeline.ensure_track(track_id, name=f"Track {len(self._timeline.tracks) + 1}")
@@ -84,17 +89,18 @@ class CompositionService:
 
         created_ids: list[str] = []
         for idx, clip in enumerate(suggestion.clips, start=1):
-            length_bars = min(max(1, clip.bars), self._timeline.bars)
+            target_clip = _slice_clip_phrase(clip, phrase_start_bar, phrase_end_bar)
+            length_bars = min(max(1, target_clip.bars), self._timeline.bars)
             if start_bar + length_bars - 1 > self._timeline.bars:
                 start_bar = max(1, self._timeline.bars - length_bars + 1)
-            name = f"{clip.name} #{idx}"
+            name = f"{target_clip.name} #{idx}"
             timeline_clip = self._timeline.add_clip(
                 track_id=track_id,
                 clip_type="midi",
                 start_bar=start_bar,
                 length_bars=length_bars,
                 name=name,
-                midi_data=clip,
+                midi_data=target_clip,
             )
             created_ids.append(timeline_clip.clip_id)
             start_bar = min(timeline_clip.end_bar + 1, self._timeline.bars)
@@ -141,3 +147,69 @@ def _format_reason(exc: Exception) -> str:
     if not text:
         return "llm_error"
     return text if len(text) <= 120 else text[:117] + "..."
+
+
+def _slice_clip_phrase(
+    clip: MidiClipDraft,
+    phrase_start_bar: int | None,
+    phrase_end_bar: int | None,
+) -> MidiClipDraft:
+    if phrase_start_bar is None and phrase_end_bar is None:
+        return clip
+
+    start_bar = max(1, int(phrase_start_bar or 1))
+    end_bar = max(1, int(phrase_end_bar or clip.bars))
+    if start_bar > end_bar:
+        start_bar, end_bar = end_bar, start_bar
+    if start_bar > clip.bars:
+        start_bar = clip.bars
+    if end_bar > clip.bars:
+        end_bar = clip.bars
+
+    ticks_per_bar = clip.ticks_per_beat * 4
+    phrase_start_tick = (start_bar - 1) * ticks_per_bar
+    phrase_end_tick = end_bar * ticks_per_bar
+
+    sliced_notes: list[MidiNoteEvent] = []
+    for note in clip.notes:
+        note_start = note.start_tick
+        note_end = note.start_tick + note.length_tick
+        if note_end <= phrase_start_tick or note_start >= phrase_end_tick:
+            continue
+        new_start = max(note_start, phrase_start_tick) - phrase_start_tick
+        new_end = min(note_end, phrase_end_tick) - phrase_start_tick
+        if new_end <= new_start:
+            continue
+        sliced_notes.append(
+            MidiNoteEvent(
+                start_tick=new_start,
+                length_tick=max(1, new_end - new_start),
+                pitch=note.pitch,
+                velocity=note.velocity,
+                channel=note.channel,
+            )
+        )
+
+    if not sliced_notes:
+        # Keep a minimal note so that phrase apply always produces audible content.
+        fallback = clip.notes[0] if clip.notes else MidiNoteEvent(0, clip.ticks_per_beat, 60, 90, 0 if not clip.is_drum else 9)
+        sliced_notes = [
+            MidiNoteEvent(
+                start_tick=0,
+                length_tick=max(1, min(fallback.length_tick, ticks_per_bar)),
+                pitch=fallback.pitch,
+                velocity=fallback.velocity,
+                channel=fallback.channel,
+            )
+        ]
+
+    phrase_bars = max(1, end_bar - start_bar + 1)
+    return MidiClipDraft(
+        name=f"{clip.name} [bar {start_bar}-{end_bar}]",
+        bars=phrase_bars,
+        grid=clip.grid,
+        notes=sliced_notes,
+        program=clip.program,
+        is_drum=clip.is_drum,
+        ticks_per_beat=clip.ticks_per_beat,
+    )
