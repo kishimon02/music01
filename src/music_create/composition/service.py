@@ -83,7 +83,21 @@ class CompositionService:
     ) -> tuple[str, list[str]]:
         suggestion = self._get_suggestion(suggestion_id)
         track_id = suggestion.request.track_id
-        self._timeline.ensure_track(track_id, name=f"Track {len(self._timeline.tracks) + 1}")
+        if track_id not in self._timeline.tracks:
+            track_name, instrument_name, program, is_drum, color = _track_metadata_from_request(
+                suggestion.request,
+                index=len(self._timeline.tracks) + 1,
+            )
+            self._timeline.ensure_track(
+                track_id,
+                name=track_name,
+                instrument_name=instrument_name,
+                program=program,
+                is_drum=is_drum,
+                color=color,
+            )
+        else:
+            self._timeline.ensure_track(track_id)
         existing = self._timeline.clips_for_track(track_id)
         start_bar = 1 if not existing else min(existing[-1].end_bar + 1, self._timeline.bars)
 
@@ -212,4 +226,30 @@ def _slice_clip_phrase(
         program=clip.program,
         is_drum=clip.is_drum,
         ticks_per_beat=clip.ticks_per_beat,
+    )
+
+
+def _track_metadata_from_request(request: ComposeRequest, *, index: int) -> tuple[str, str, int | None, bool, str]:
+    if request.part == "drum":
+        return (
+            f"Drums {index}",
+            "Drums",
+            None,
+            True,
+            "#FF8A4C",
+        )
+    program = request.program if request.program is not None else 0
+    if request.part == "chord":
+        label = "Harmony"
+        color = "#4D8FF4"
+    else:
+        label = "Lead"
+        color = "#66B7FF"
+    instrument_name = f"Program {program}"
+    return (
+        f"{label} {index}",
+        instrument_name,
+        program,
+        False,
+        color,
     )

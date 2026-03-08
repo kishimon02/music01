@@ -27,22 +27,33 @@ from music_create.mixing import Mixing
 from music_create.mixing.models import Suggestion, SuggestionCommand
 from music_create.mixing.service import MixingService
 from music_create.ui.piano_roll import PianoRollNote, SimplePianoRollView
-from music_create.ui.timeline import TimelineClip, TimelineState
+from music_create.ui.quick_bridge import TimelineSceneModel, TransportState, WorkspaceLayoutState
+from music_create.ui.timeline import TimelineClip, TimelineState, TimelineTrack
+from music_create.ui.transport_display import (
+    DISPLAY_MODE_BARS,
+    DISPLAY_MODE_TIME,
+    bar_to_seconds,
+    format_clip_range,
+    format_clock_time,
+    format_transport_position,
+    seconds_per_bar,
+    seconds_to_bar,
+)
 from music_create.ui.waveform import WaveformView
 
 try:
-    from PySide6.QtCore import QTimer, Qt
+    from PySide6.QtCore import QSettings, QTimer, Qt, QUrl
     from PySide6.QtGui import QColor
+    from PySide6.QtQuickWidgets import QQuickWidget
     from PySide6.QtWidgets import (
-        QAbstractItemView,
         QApplication,
         QComboBox,
         QFileDialog,
         QFrame,
         QFormLayout,
         QGroupBox,
-        QHeaderView,
         QHBoxLayout,
+        QInputDialog,
         QLabel,
         QLineEdit,
         QListWidget,
@@ -55,23 +66,20 @@ try:
         QSpinBox,
         QSplitter,
         QTabWidget,
-        QTableWidget,
-        QTableWidgetItem,
         QTextEdit,
         QVBoxLayout,
         QWidget,
     )
 except ImportError:  # pragma: no cover - runtime-only path
     QTimer = object  # type: ignore[assignment]
-    QAbstractItemView = object  # type: ignore[assignment]
     QApplication = None  # type: ignore[assignment]
     QFileDialog = object  # type: ignore[assignment]
     QComboBox = object  # type: ignore[assignment]
     QFrame = object  # type: ignore[assignment]
     QFormLayout = object  # type: ignore[assignment]
     QGroupBox = object  # type: ignore[assignment]
-    QHeaderView = object  # type: ignore[assignment]
     QHBoxLayout = object  # type: ignore[assignment]
+    QInputDialog = object  # type: ignore[assignment]
     QLabel = object  # type: ignore[assignment]
     QLineEdit = object  # type: ignore[assignment]
     QListWidget = object  # type: ignore[assignment]
@@ -82,14 +90,15 @@ except ImportError:  # pragma: no cover - runtime-only path
     QScrollArea = object  # type: ignore[assignment]
     QSlider = object  # type: ignore[assignment]
     QSpinBox = object  # type: ignore[assignment]
+    QSettings = object  # type: ignore[assignment]
     QSplitter = object  # type: ignore[assignment]
     QTabWidget = object  # type: ignore[assignment]
-    QTableWidget = object  # type: ignore[assignment]
-    QTableWidgetItem = object  # type: ignore[assignment]
     QTextEdit = object  # type: ignore[assignment]
     QVBoxLayout = object  # type: ignore[assignment]
+    QQuickWidget = object  # type: ignore[assignment]
     QWidget = object  # type: ignore[assignment]
     QColor = object  # type: ignore[assignment]
+    QUrl = object  # type: ignore[assignment]
     Qt = object  # type: ignore[assignment]
 
 
@@ -136,15 +145,31 @@ def composition_instrument_options() -> tuple[tuple[str, int], ...]:
     )
 
 
+def arranger_instrument_options() -> tuple[tuple[str, int | None, bool], ...]:
+    return tuple((label, program, False) for label, program in composition_instrument_options()) + (("ドラム", None, True),)
+
+
+def instrument_name_from_program(program: int | None, *, is_drum: bool = False) -> str:
+    if is_drum:
+        return "ドラム"
+    for label, value in composition_instrument_options():
+        if value == program:
+            return label
+    return f"Program {program if program is not None else 0}"
+
+
+def track_color_for_program(program: int | None, *, is_drum: bool = False) -> str:
+    if is_drum:
+        return "#FF8A4C"
+    palette = ("#4D8FF4", "#66B7FF", "#74D39E", "#E4B84D", "#C28EFF", "#5CC7C8")
+    return palette[(program or 0) % len(palette)]
+
+
 def midi_note_name(pitch: int) -> str:
     names = ("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
     normalized = min(max(int(pitch), 0), 127)
     octave = (normalized // 12) - 1
     return f"{names[normalized % 12]}{octave}"
-
-
-def pitch_class_guide_text() -> str:
-    return "C C# D D# E F F# G G# A A# B"
 
 
 def _studio_one_stylesheet() -> str:
@@ -296,6 +321,11 @@ def _studio_one_stylesheet() -> str:
     QPushButton:pressed {
         background: #1F252D;
     }
+    QPushButton:checked {
+        background: #314B72;
+        border: 1px solid #67A3FF;
+        color: #F7FAFD;
+    }
     QPushButton[accent="true"] {
         background: #4D8FF4;
         border: 1px solid #67A3FF;
@@ -378,16 +408,36 @@ class IntegratedWindow(QMainWindow):
         self._suggestions: dict[str, Suggestion] = {}
         self._compose_suggestions: dict[str, ComposeSuggestion] = {}
         self._compose_ab_slots: dict[str, str | None] = {"A": None, "B": None}
+        self.selected_clip_id: str | None = None
         self._selected_midi_clip_id: str | None = None
         self._selected_timeline_bar = 1
         self._updating_roll_from_model = False
-        self._timeline = TimelineState(bars=16)
+        self._settings = QSettings("music-create", "music-create") if QSettings is not object else None
+        self._arranger_zoom_levels = (4, 8, 16, 32, 64)
+        self.tool_mode = self._setting_str("workspace/tool_mode", "select")
+        if self.tool_mode not in {"select", "pencil"}:
+            self.tool_mode = "select"
+        self.pending_track_creation_from_pencil: tuple[int, int, int] | None = None
+        self._timeline = TimelineState(bars=64, max_bars=1000, expansion_chunk=64, expand_threshold_bars=8)
         self._composition = Composition(service=CompositionService(self._timeline))
         self._init_default_timeline()
         self._preview_render_dir = Path(tempfile.gettempdir()) / "music_create" / "preview_wav"
         self._preview_render_dir.mkdir(parents=True, exist_ok=True)
         self._tempo_bpm = 120.0
         self._beats_per_bar = 4.0
+        zoom_level = self._setting_int("workspace/zoom_level", 16)
+        if zoom_level not in self._arranger_zoom_levels:
+            zoom_level = 16
+        self._workspace_layout = WorkspaceLayoutState(
+            inspector_collapsed=self._setting_bool("workspace/inspector_collapsed", False),
+            rack_collapsed=self._setting_bool("workspace/rack_collapsed", False),
+            display_mode=self._setting_str("workspace/display_mode", DISPLAY_MODE_BARS),
+            zoom_level=zoom_level,
+        )
+        self._transport_state = TransportState()
+        self._timeline_scene_model = TimelineSceneModel()
+        self._inspector_last_width = self._setting_int("workspace/inspector_width", 360)
+        self._rack_last_height = self._setting_int("workspace/rack_height", 360)
         self._playback_track_id: str | None = None
         self._playback_started_at: float | None = None
         self._playback_duration_sec = 0.0
@@ -397,6 +447,12 @@ class IntegratedWindow(QMainWindow):
             self._playback_timer = QTimer(self)
             self._playback_timer.setInterval(33)
             self._playback_timer.timeout.connect(self._on_playback_tick)
+        self._transport_state.playheadRequested.connect(self._on_transport_playhead_requested)
+        self._timeline_scene_model.selectionRequested.connect(self._on_arranger_selection_requested)
+        self._timeline_scene_model.clipCreationRequested.connect(self._on_arranger_clip_creation_requested)
+        self._timeline_scene_model.zoomInRequested.connect(self._on_arranger_zoom_in)
+        self._timeline_scene_model.zoomOutRequested.connect(self._on_arranger_zoom_out)
+        self._timeline_scene_model.set_tool_mode(self.tool_mode)
 
         self._build_ui()
         self._sync_track_controls_from_timeline()
@@ -404,10 +460,65 @@ class IntegratedWindow(QMainWindow):
         self._refresh_wav_info()
 
     def _init_default_timeline(self) -> None:
-        track1 = self._timeline.add_track("Track 1")
-        track2 = self._timeline.add_track("Track 2")
-        self._timeline.add_clip(track1.track_id, "midi", start_bar=1, length_bars=4, name="Intro Chords")
-        self._timeline.add_clip(track1.track_id, "midi", start_bar=5, length_bars=4, name="Lead Hook")
+        track1 = self._timeline.add_track(
+            "Keys 1",
+            instrument_name="ピアノ",
+            program=0,
+            color=track_color_for_program(0),
+        )
+        track2 = self._timeline.add_track(
+            "Drums 1",
+            instrument_name="ドラム",
+            program=None,
+            is_drum=True,
+            color=track_color_for_program(None, is_drum=True),
+        )
+        self._timeline.add_clip(
+            track1.track_id,
+            "midi",
+            start_bar=1,
+            length_bars=4,
+            name="Intro Chords",
+            midi_data={
+                "name": "Intro Chords",
+                "bars": 4,
+                "grid": "1/16",
+                "notes": [
+                    {"start_tick": 0, "length_tick": 1920, "pitch": 60, "velocity": 96, "channel": 0},
+                    {"start_tick": 0, "length_tick": 1920, "pitch": 64, "velocity": 92, "channel": 0},
+                    {"start_tick": 0, "length_tick": 1920, "pitch": 67, "velocity": 90, "channel": 0},
+                    {"start_tick": 3840, "length_tick": 1920, "pitch": 62, "velocity": 94, "channel": 0},
+                    {"start_tick": 3840, "length_tick": 1920, "pitch": 65, "velocity": 90, "channel": 0},
+                    {"start_tick": 3840, "length_tick": 1920, "pitch": 69, "velocity": 88, "channel": 0},
+                ],
+                "program": 0,
+                "is_drum": False,
+                "ticks_per_beat": 960,
+            },
+        )
+        self._timeline.add_clip(
+            track1.track_id,
+            "midi",
+            start_bar=5,
+            length_bars=4,
+            name="Lead Hook",
+            midi_data={
+                "name": "Lead Hook",
+                "bars": 4,
+                "grid": "1/16",
+                "notes": [
+                    {"start_tick": 0, "length_tick": 480, "pitch": 72, "velocity": 104, "channel": 0},
+                    {"start_tick": 960, "length_tick": 480, "pitch": 74, "velocity": 108, "channel": 0},
+                    {"start_tick": 1920, "length_tick": 480, "pitch": 76, "velocity": 112, "channel": 0},
+                    {"start_tick": 2880, "length_tick": 960, "pitch": 79, "velocity": 110, "channel": 0},
+                    {"start_tick": 4320, "length_tick": 480, "pitch": 76, "velocity": 102, "channel": 0},
+                    {"start_tick": 5280, "length_tick": 960, "pitch": 74, "velocity": 96, "channel": 0},
+                ],
+                "program": 0,
+                "is_drum": False,
+                "ticks_per_beat": 960,
+            },
+        )
         self._timeline.add_clip(track2.track_id, "audio", start_bar=1, length_bars=8, name="Drum Loop")
 
     def _track_signal_provider(self, track_id: str) -> list[float]:
@@ -438,8 +549,193 @@ class IntegratedWindow(QMainWindow):
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         scroll.setWidget(content)
         return scroll
+
+    def _setting_bool(self, key: str, default: bool) -> bool:
+        if self._settings is None:
+            return default
+        value = self._settings.value(key, default)
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+        return bool(value)
+
+    def _setting_int(self, key: str, default: int) -> int:
+        if self._settings is None:
+            return default
+        value = self._settings.value(key, default)
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
+    def _setting_str(self, key: str, default: str) -> str:
+        if self._settings is None:
+            return default
+        value = self._settings.value(key, default)
+        return value if isinstance(value, str) else default
+
+    def _write_setting(self, key: str, value: object) -> None:
+        if self._settings is not None:
+            self._settings.setValue(key, value)
+
+    def _qml_path(self, filename: str) -> Path:
+        return Path(__file__).resolve().parent / "qml" / filename
+
+    def _build_quick_widget(
+        self,
+        filename: str,
+        *,
+        object_name: str,
+        min_height: int,
+        context: dict[str, object] | None = None,
+    ) -> QWidget:
+        if QQuickWidget is object:
+            fallback = QLabel("Qt Quick unavailable")
+            fallback.setObjectName(object_name)
+            fallback.setMinimumHeight(min_height)
+            fallback.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            return fallback
+
+        widget = QQuickWidget()
+        widget.setObjectName(object_name)
+        widget.setResizeMode(QQuickWidget.ResizeMode.SizeRootObjectToView)
+        widget.setClearColor(QColor("#16181D"))
+        widget.setMinimumHeight(min_height)
+        if context:
+            for name, value in context.items():
+                widget.rootContext().setContextProperty(name, value)
+        path = self._qml_path(filename)
+        widget.setSource(QUrl.fromLocalFile(str(path)))
+        if widget.status() == QQuickWidget.Status.Error:
+            errors = "\n".join(error.toString() for error in widget.errors())
+            fallback = QLabel(f"Qt Quick load error\n{errors}")
+            fallback.setObjectName(object_name)
+            fallback.setMinimumHeight(min_height)
+            fallback.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            return fallback
+        return widget
+
+    def _current_display_mode(self) -> str:
+        return self._workspace_layout.get_display_mode()
+
+    def _sync_header_controls(self) -> None:
+        mode_index = self.display_mode_combo.findData(self._workspace_layout.get_display_mode())
+        if mode_index >= 0:
+            self.display_mode_combo.blockSignals(True)
+            self.display_mode_combo.setCurrentIndex(mode_index)
+            self.display_mode_combo.blockSignals(False)
+
+        self.toggle_inspector_button.blockSignals(True)
+        self.toggle_inspector_button.setChecked(not self._workspace_layout.get_inspector_collapsed())
+        self.toggle_inspector_button.setText(
+            "インスペクタを隠す" if not self._workspace_layout.get_inspector_collapsed() else "インスペクタを表示"
+        )
+        self.toggle_inspector_button.blockSignals(False)
+
+        self.toggle_rack_button.blockSignals(True)
+        self.toggle_rack_button.setChecked(not self._workspace_layout.get_rack_collapsed())
+        self.toggle_rack_button.setText(
+            "下部ラックを隠す" if not self._workspace_layout.get_rack_collapsed() else "下部ラックを表示"
+        )
+        self.toggle_rack_button.blockSignals(False)
+
+    def _apply_inspector_collapsed_state(self, collapsed: bool, *, persist: bool = True) -> None:
+        self._workspace_layout.set_inspector_collapsed(collapsed)
+        if hasattr(self, "inspector_panel"):
+            if collapsed:
+                sizes = self.workspace_body_splitter.sizes()
+                if len(sizes) > 1 and sizes[1] > 0:
+                    self._inspector_last_width = sizes[1]
+                self.inspector_panel.hide()
+                self.workspace_body_splitter.setSizes([1, 0])
+            else:
+                self.inspector_panel.show()
+                self.workspace_body_splitter.setSizes([max(self.width() - self._inspector_last_width, 1), self._inspector_last_width])
+        if persist:
+            self._write_setting("workspace/inspector_collapsed", collapsed)
+            self._write_setting("workspace/inspector_width", self._inspector_last_width)
+        if hasattr(self, "toggle_inspector_button"):
+            self._sync_header_controls()
+
+    def _apply_rack_collapsed_state(self, collapsed: bool, *, persist: bool = True) -> None:
+        self._workspace_layout.set_rack_collapsed(collapsed)
+        if hasattr(self, "utility_rack"):
+            if collapsed:
+                sizes = self.workspace_splitter.sizes()
+                if len(sizes) > 1 and sizes[1] > 0:
+                    self._rack_last_height = sizes[1]
+                self.utility_rack.hide()
+                self.workspace_splitter.setSizes([1, 0])
+            else:
+                self.utility_rack.show()
+                self.workspace_splitter.setSizes([max(self.height() - self._rack_last_height, 1), self._rack_last_height])
+        if persist:
+            self._write_setting("workspace/rack_collapsed", collapsed)
+            self._write_setting("workspace/rack_height", self._rack_last_height)
+        if hasattr(self, "toggle_rack_button"):
+            self._sync_header_controls()
+
+    def _toggle_inspector_panel(self) -> None:
+        self._apply_inspector_collapsed_state(self.inspector_panel.isVisible())
+
+    def _toggle_rack_panel(self) -> None:
+        self._apply_rack_collapsed_state(self.utility_rack.isVisible())
+
+    def _on_display_mode_changed(self, _index: int) -> None:
+        current = self.display_mode_combo.currentData()
+        mode = current if isinstance(current, str) else DISPLAY_MODE_BARS
+        self._workspace_layout.set_display_mode(mode)
+        self._write_setting("workspace/display_mode", mode)
+        self._refresh_timeline_view()
+        self._refresh_shell_state()
+
+    def _on_arranger_zoom_changed(self, _index: int) -> None:
+        current = self.arranger_zoom_combo.currentData()
+        level = int(current) if isinstance(current, int) else 16
+        self._workspace_layout.set_zoom_level(level)
+        self._write_setting("workspace/zoom_level", level)
+        self._refresh_timeline_view()
+
+    def _sync_arranger_tool_controls(self) -> None:
+        if not hasattr(self, "arranger_select_tool_button"):
+            return
+        self.arranger_select_tool_button.blockSignals(True)
+        self.arranger_pencil_tool_button.blockSignals(True)
+        self.arranger_select_tool_button.setChecked(self.tool_mode == "select")
+        self.arranger_pencil_tool_button.setChecked(self.tool_mode == "pencil")
+        self.arranger_select_tool_button.blockSignals(False)
+        self.arranger_pencil_tool_button.blockSignals(False)
+
+    def _set_tool_mode(self, tool_mode: str, *, persist: bool = True) -> None:
+        normalized = tool_mode if tool_mode in {"select", "pencil"} else "select"
+        if normalized == self.tool_mode:
+            self._sync_arranger_tool_controls()
+            return
+        self.tool_mode = normalized
+        self._timeline_scene_model.set_tool_mode(normalized)
+        if persist:
+            self._write_setting("workspace/tool_mode", normalized)
+        self._sync_arranger_tool_controls()
+        self._refresh_timeline_view()
+
+    def _step_arranger_zoom(self, direction: int) -> None:
+        current_level = self._workspace_layout.get_zoom_level()
+        try:
+            current_index = self._arranger_zoom_levels.index(current_level)
+        except ValueError:
+            current_index = self._arranger_zoom_levels.index(16)
+        next_index = min(max(current_index + direction, 0), len(self._arranger_zoom_levels) - 1)
+        self.arranger_zoom_combo.setCurrentIndex(next_index)
+
+    def _on_arranger_zoom_in(self) -> None:
+        self._step_arranger_zoom(1)
+
+    def _on_arranger_zoom_out(self) -> None:
+        self._step_arranger_zoom(-1)
 
     def _build_ui(self) -> None:
         root = QWidget()
@@ -453,19 +749,23 @@ class IntegratedWindow(QMainWindow):
         self.workspace_splitter = QSplitter(Qt.Orientation.Vertical)
         self.workspace_splitter.setChildrenCollapsible(False)
         self.workspace_splitter.addWidget(self._build_workspace_area())
-        self.workspace_splitter.addWidget(self._build_utility_rack())
-        self.workspace_splitter.setSizes([660, 280])
+        self.utility_rack = self._build_utility_rack()
+        self.workspace_splitter.addWidget(self.utility_rack)
+        self.workspace_splitter.setSizes([580, 360])
         root_layout.addWidget(self.workspace_splitter, 1)
 
         self.setCentralWidget(root)
         self.setStyleSheet(_studio_one_stylesheet())
-        self._configure_timeline_table()
         self._on_compose_part_changed()
         self._sync_phrase_range_with_bars()
         self._refresh_compose_ab_label()
         self._refresh_compose_history()
         self._refresh_history()
         self._clear_pitch_display()
+        self._sync_header_controls()
+        self._sync_arranger_tool_controls()
+        self._apply_inspector_collapsed_state(self._workspace_layout.get_inspector_collapsed(), persist=False)
+        self._apply_rack_collapsed_state(self._workspace_layout.get_rack_collapsed(), persist=False)
         self._refresh_shell_state()
 
     def _build_shell_panel(self) -> QWidget:
@@ -501,24 +801,38 @@ class IntegratedWindow(QMainWindow):
             top_row.addWidget(badge)
         layout.addLayout(top_row)
 
-        transport_row = QHBoxLayout()
-        transport_row.setSpacing(10)
-        self.playhead_label = QLabel("再生位置 1.00 小節")
-        self.playhead_label.setObjectName("transportMetric")
-        self.playhead_slider = QSlider(Qt.Orientation.Horizontal)
-        self.playhead_slider.setRange(100, self._timeline.bars * 100)
-        self.playhead_slider.setValue(100)
-        self.playhead_slider.valueChanged.connect(self._on_playhead_changed)
-        self.transport_tempo_label = QLabel("120 BPM / 4/4 / 16 bars")
-        self.transport_tempo_label.setObjectName("transportMetric")
-        transport_row.addWidget(self.playhead_label)
-        transport_row.addWidget(self.playhead_slider, 1)
-        transport_row.addWidget(self.transport_tempo_label)
-        layout.addLayout(transport_row)
+        control_row = QHBoxLayout()
+        control_row.setSpacing(8)
+        mode_label = QLabel("表示単位")
+        mode_label.setObjectName("panelCaption")
+        control_row.addWidget(mode_label)
+        self.display_mode_combo = QComboBox()
+        self.display_mode_combo.addItem("小節", DISPLAY_MODE_BARS)
+        self.display_mode_combo.addItem("時間", DISPLAY_MODE_TIME)
+        control_row.addWidget(self.display_mode_combo)
+        control_row.addStretch(1)
+        self.toggle_inspector_button = QPushButton("インスペクタ")
+        self.toggle_inspector_button.setCheckable(True)
+        self.toggle_rack_button = QPushButton("下部ラック")
+        self.toggle_rack_button.setCheckable(True)
+        control_row.addWidget(self.toggle_inspector_button)
+        control_row.addWidget(self.toggle_rack_button)
+        layout.addLayout(control_row)
+
+        self.transport_view = self._build_quick_widget(
+            "TransportStrip.qml",
+            object_name="transportQuick",
+            min_height=78,
+            context={"transportState": self._transport_state},
+        )
+        layout.addWidget(self.transport_view)
 
         self.status_label = QLabel("[--:--:--] 準備完了。")
         self.status_label.setObjectName("statusStrip")
         layout.addWidget(self.status_label)
+        self.display_mode_combo.currentIndexChanged.connect(self._on_display_mode_changed)
+        self.toggle_inspector_button.clicked.connect(self._toggle_inspector_panel)
+        self.toggle_rack_button.clicked.connect(self._toggle_rack_panel)
         return panel
 
     def _build_workspace_area(self) -> QWidget:
@@ -529,15 +843,10 @@ class IntegratedWindow(QMainWindow):
 
         self.workspace_body_splitter = QSplitter(Qt.Orientation.Horizontal)
         self.workspace_body_splitter.setChildrenCollapsible(False)
-
-        self.arranger_editor_splitter = QSplitter(Qt.Orientation.Vertical)
-        self.arranger_editor_splitter.setChildrenCollapsible(False)
-        self.arranger_editor_splitter.addWidget(self._build_arranger_panel())
-        self.arranger_editor_splitter.addWidget(self._build_editor_panel())
-        self.arranger_editor_splitter.setSizes([620, 300])
-
-        self.workspace_body_splitter.addWidget(self.arranger_editor_splitter)
-        self.workspace_body_splitter.addWidget(self._build_inspector_panel())
+        self.arranger_panel = self._build_arranger_panel()
+        self.inspector_panel = self._build_inspector_panel()
+        self.workspace_body_splitter.addWidget(self.arranger_panel)
+        self.workspace_body_splitter.addWidget(self.inspector_panel)
         self.workspace_body_splitter.setSizes([1140, 360])
 
         layout.addWidget(self.workspace_body_splitter, 1)
@@ -551,49 +860,71 @@ class IntegratedWindow(QMainWindow):
 
         toolbar = QHBoxLayout()
         toolbar.setSpacing(8)
-        self.arranger_context_label = QLabel("Timeline lanes / waveform overview")
+        self.arranger_context_label = QLabel("Timeline minimap / lanes / clip view")
         self.arranger_context_label.setObjectName("panelCaption")
         toolbar.addWidget(self.arranger_context_label)
         toolbar.addStretch(1)
 
+        self.arranger_select_tool_button = QPushButton("選択")
+        self.arranger_select_tool_button.setCheckable(True)
+        self.arranger_pencil_tool_button = QPushButton("鉛筆")
+        self.arranger_pencil_tool_button.setCheckable(True)
         self.add_track_button = QPushButton("トラック追加")
         self.add_midi_clip_button = QPushButton("MIDI追加")
         self.add_audio_clip_button = QPushButton("Audio追加")
-        for button in (self.add_track_button, self.add_midi_clip_button, self.add_audio_clip_button):
+        self.arranger_zoom_out_button = QPushButton("-")
+        self.arranger_zoom_in_button = QPushButton("+")
+        self.arranger_zoom_combo = QComboBox()
+        for level in self._arranger_zoom_levels:
+            self.arranger_zoom_combo.addItem(f"{level} px/bar", level)
+        zoom_index = self.arranger_zoom_combo.findData(self._workspace_layout.get_zoom_level())
+        self.arranger_zoom_combo.setCurrentIndex(zoom_index if zoom_index >= 0 else 2)
+        for button in (
+            self.arranger_select_tool_button,
+            self.arranger_pencil_tool_button,
+            self.add_track_button,
+            self.add_midi_clip_button,
+            self.add_audio_clip_button,
+            self.arranger_zoom_out_button,
+        ):
             toolbar.addWidget(button)
+        toolbar.addWidget(self.arranger_zoom_combo)
+        toolbar.addWidget(self.arranger_zoom_in_button)
         layout.addLayout(toolbar)
 
-        self.waveform_view = WaveformView()
-        self.waveform_view.setMinimumHeight(150)
-        layout.addWidget(self.waveform_view)
-
-        self.timeline_table = QTableWidget(0, self._timeline.bars)
-        self.timeline_table.setObjectName("timelineTable")
-        self.timeline_table.setHorizontalHeaderLabels([str(idx) for idx in range(1, self._timeline.bars + 1)])
-        self.timeline_table.cellClicked.connect(self._on_timeline_cell_clicked)
-        layout.addWidget(self.timeline_table, 1)
+        self.arranger_view = self._build_quick_widget(
+            "ArrangerCanvas.qml",
+            object_name="arrangerQuick",
+            min_height=480,
+            context={"sceneModel": self._timeline_scene_model},
+        )
+        layout.addWidget(self.arranger_view, 1)
 
         self.add_track_button.clicked.connect(self._on_add_track)
         self.add_midi_clip_button.clicked.connect(lambda: self._on_add_clip("midi"))
         self.add_audio_clip_button.clicked.connect(lambda: self._on_add_clip("audio"))
+        self.arranger_select_tool_button.clicked.connect(lambda: self._set_tool_mode("select"))
+        self.arranger_pencil_tool_button.clicked.connect(lambda: self._set_tool_mode("pencil"))
+        self.arranger_zoom_out_button.clicked.connect(self._on_arranger_zoom_out)
+        self.arranger_zoom_in_button.clicked.connect(self._on_arranger_zoom_in)
+        self.arranger_zoom_combo.currentIndexChanged.connect(self._on_arranger_zoom_changed)
         return box
 
-    def _build_editor_panel(self) -> QGroupBox:
-        box = QGroupBox("エディタ")
+    def _build_editor_panel(self) -> QWidget:
+        box = QWidget()
+        box.setMinimumHeight(620)
         layout = QHBoxLayout(box)
         layout.setContentsMargins(14, 18, 14, 14)
         layout.setSpacing(12)
 
         sidebar = QWidget()
+        sidebar.setMinimumWidth(340)
         sidebar_layout = QVBoxLayout(sidebar)
         sidebar_layout.setContentsMargins(0, 0, 0, 0)
         sidebar_layout.setSpacing(8)
 
-        self.pitch_class_label = QLabel(f"12音ガイド: {pitch_class_guide_text()}")
-        self.pitch_class_label.setObjectName("panelCaption")
         self.pitch_clip_label = QLabel("選択MIDIクリップ: なし")
         self.pitch_clip_label.setObjectName("panelHeadline")
-        sidebar_layout.addWidget(self.pitch_class_label)
         sidebar_layout.addWidget(self.pitch_clip_label)
 
         clip_summary_label = QLabel("クリップ概要")
@@ -639,11 +970,18 @@ class IntegratedWindow(QMainWindow):
         roll_layout = QVBoxLayout(roll_container)
         roll_layout.setContentsMargins(0, 0, 0, 0)
         roll_layout.setSpacing(8)
+        waveform_caption = QLabel("Waveform")
+        waveform_caption.setObjectName("sectionLabel")
+        roll_layout.addWidget(waveform_caption)
+        self.waveform_view = WaveformView()
+        self.waveform_view.setMinimumHeight(130)
+        roll_layout.addWidget(self.waveform_view)
         roll_caption = QLabel("Piano Roll")
         roll_caption.setObjectName("sectionLabel")
         roll_layout.addWidget(roll_caption)
         self.piano_roll_view = SimplePianoRollView()
-        self.piano_roll_view.setMinimumHeight(240)
+        self.piano_roll_view.setObjectName("pianoRollEditor")
+        self.piano_roll_view.setMinimumHeight(280)
         roll_layout.addWidget(self.piano_roll_view, 1)
 
         layout.addWidget(sidebar, 0)
@@ -894,6 +1232,11 @@ class IntegratedWindow(QMainWindow):
         layout.setSpacing(10)
 
         self.utility_tabs = QTabWidget()
+        self.editor_panel = self._build_editor_panel()
+        self.editor_scroll_area = self._make_scroll_tab(self.editor_panel)
+        self.editor_scroll_area.setObjectName("editorScrollArea")
+        self.editor_tab = self.editor_scroll_area
+        self.utility_tabs.addTab(self.editor_tab, "エディタ")
         self.utility_tabs.addTab(self._build_mix_suggestion_tab(), "ミックス提案")
         self.utility_tabs.addTab(self._build_mix_history_tab(), "ミックス履歴")
         self.utility_tabs.addTab(self._build_compose_suggestion_tab(), "作曲提案")
@@ -1038,17 +1381,7 @@ class IntegratedWindow(QMainWindow):
         return page
 
     def _configure_timeline_table(self) -> None:
-        self.timeline_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
-        self.timeline_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.timeline_table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.timeline_table.setAlternatingRowColors(False)
-        self.timeline_table.setShowGrid(True)
-        self.timeline_table.setWordWrap(False)
-        self.timeline_table.verticalHeader().setDefaultSectionSize(42)
-        self.timeline_table.verticalHeader().setMinimumWidth(180)
-        self.timeline_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self.timeline_table.horizontalHeader().setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.timeline_table.horizontalHeader().setMinimumSectionSize(56)
+        return None
 
     def _sync_track_controls_from_timeline(self) -> None:
         current = self.track_input.text().strip()
@@ -1069,6 +1402,7 @@ class IntegratedWindow(QMainWindow):
 
     def _on_track_input_edited(self) -> None:
         track_id = self._current_track_id()
+        self.selected_clip_id = None
         if hasattr(self, "compose_track_input") and track_id in self._timeline.tracks:
             self.compose_track_input.setText(track_id)
         self._refresh_wav_info()
@@ -1085,12 +1419,25 @@ class IntegratedWindow(QMainWindow):
         if clip is None:
             text = "選択クリップ: なし\nタイムラインでクリップを選択すると概要を表示します。"
         else:
+            track = self._timeline.tracks.get(clip.track_id)
             lines = [
                 f"選択クリップ: {clip.name}",
                 f"タイプ: {'MIDI' if clip.clip_type == 'midi' else 'Audio'}",
                 f"トラック: {clip.track_id}",
-                f"範囲: bar {clip.start_bar}-{clip.end_bar} ({clip.length_bars} bars)",
             ]
+            if track is not None:
+                lines.append(f"楽器: {track.instrument_name}")
+            lines.append(
+                "範囲: "
+                + format_clip_range(
+                    clip.start_bar,
+                    clip.end_bar,
+                    display_mode=self._current_display_mode(),
+                    tempo_bpm=self._tempo_bpm,
+                    beats_per_bar=self._beats_per_bar,
+                )
+                + (f" ({clip.length_bars} bars)" if self._current_display_mode() == DISPLAY_MODE_TIME else "")
+            )
             if clip.clip_type == "midi" and isinstance(raw, dict):
                 notes = raw.get("notes")
                 note_count = len(notes) if isinstance(notes, list) else 0
@@ -1116,12 +1463,22 @@ class IntegratedWindow(QMainWindow):
             self.track_clip_summary.setPlainText(text)
 
     def _refresh_playback_position_labels(self) -> None:
-        self.playhead_label.setText(f"再生位置 {self._timeline.playhead_bar:.2f} 小節")
         elapsed = self._bar_to_seconds(self._timeline.playhead_bar)
+        transport_text = format_transport_position(
+            self._timeline.playhead_bar,
+            display_mode=self._current_display_mode(),
+            tempo_bpm=self._tempo_bpm,
+            beats_per_bar=self._beats_per_bar,
+        )
         if hasattr(self, "track_playback_position_label"):
-            self.track_playback_position_label.setText(
-                f"再生位置: bar {self._timeline.playhead_bar:.2f} / {elapsed:.2f}s"
-            )
+            if self._current_display_mode() == DISPLAY_MODE_TIME:
+                self.track_playback_position_label.setText(
+                    f"再生位置: {transport_text} / {format_clock_time(elapsed, always_include_hours=False, include_millis=True)}"
+                )
+            else:
+                self.track_playback_position_label.setText(
+                    f"再生位置: {transport_text} / {elapsed:.2f}s"
+                )
 
     def _refresh_shell_state(self, _value: object | None = None) -> None:
         if not hasattr(self, "playback_badge"):
@@ -1138,112 +1495,122 @@ class IntegratedWindow(QMainWindow):
         self.track_badge.setText(f"TRACK {current_track}")
         self.mix_engine_badge.setText(f"MIX {mix_engine} / {mix_mode}")
         self.compose_engine_badge.setText(f"COMPOSE {compose_engine} / {self._current_compose_grid()}")
-        self.transport_tempo_label.setText(
-            f"{self._tempo_bpm:.0f} BPM / {self._beats_per_bar:.0f}/4 / {self._timeline.bars} bars"
+        self._transport_state.sync(
+            playhead_bar=self._timeline.playhead_bar,
+            total_bars=self._timeline.bars,
+            display_mode=self._current_display_mode(),
+            tempo_bpm=self._tempo_bpm,
+            beats_per_bar=self._beats_per_bar,
         )
         self._refresh_playback_position_labels()
 
     def _refresh_timeline_view(self) -> None:
-        tracks = self._timeline.tracks_in_order()
-        self.timeline_table.setRowCount(len(tracks))
-        self.timeline_table.setColumnCount(self._timeline.bars)
-        self.timeline_table.setHorizontalHeaderLabels([str(idx) for idx in range(1, self._timeline.bars + 1)])
-
-        for row, track in enumerate(tracks):
-            header_item = QTableWidgetItem(f"{track.name} ({track.track_id})")
-            header_item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-            self.timeline_table.setVerticalHeaderItem(row, header_item)
-            for col in range(self._timeline.bars):
-                cell = self.timeline_table.item(row, col)
-                if cell is None:
-                    cell = QTableWidgetItem("")
-                cell.setText("")
-                cell.setToolTip("")
-                cell.setFlags(cell.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                cell.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-                self.timeline_table.setItem(row, col, cell)
-
+        if self.selected_clip_id is not None and self.selected_clip_id not in self._timeline.clips:
+            self.selected_clip_id = None
+        tracks_data: list[dict[str, object]] = []
+        for track in self._timeline.tracks_in_order():
+            clips: list[dict[str, object]] = []
             for clip in self._timeline.clips_for_track(track.track_id):
-                self._paint_clip_on_row(row, clip)
+                clip_color = track.color if clip.clip_type == "midi" else "#D97A36"
+                clips.append(
+                    {
+                        "clipId": clip.clip_id,
+                        "trackId": clip.track_id,
+                        "name": clip.name,
+                        "clipType": clip.clip_type,
+                        "startBar": clip.start_bar,
+                        "lengthBars": clip.length_bars,
+                        "endBar": clip.end_bar,
+                        "color": clip_color,
+                        "tooltip": (
+                            f"{clip.name} | {'MIDI' if clip.clip_type == 'midi' else 'Audio'} | "
+                            + format_clip_range(
+                                clip.start_bar,
+                                clip.end_bar,
+                                display_mode=self._current_display_mode(),
+                                tempo_bpm=self._tempo_bpm,
+                                beats_per_bar=self._beats_per_bar,
+                            )
+                        ),
+                    }
+                )
+            tracks_data.append(
+                {
+                    "trackId": track.track_id,
+                    "name": track.name,
+                    "instrumentName": track.instrument_name,
+                    "program": track.program,
+                    "isDrum": track.is_drum,
+                    "color": track.color,
+                    "clips": clips,
+                }
+            )
 
+        self._timeline.refresh_content_end_bar()
+        self._timeline_scene_model.sync(
+            tracks=tracks_data,
+            total_bars=self._timeline.bars,
+            content_end_bar=self._timeline.content_end_bar,
+            max_bars=self._timeline.max_bars,
+            playhead_bar=self._timeline.playhead_bar,
+            selected_track_id=self._current_track_id(),
+            selected_bar=self._selected_timeline_bar,
+            selected_clip_id=self.selected_clip_id or "",
+            zoom_level=self._workspace_layout.get_zoom_level(),
+            display_mode=self._current_display_mode(),
+            tempo_bpm=self._tempo_bpm,
+            beats_per_bar=self._beats_per_bar,
+            tool_mode=self.tool_mode,
+        )
         self._paint_playhead()
         if hasattr(self, "pitch_detail"):
-            self._update_pitch_display(track_id=self._current_track_id(), bar=self._selected_timeline_bar)
-
-    def _paint_clip_on_row(self, row: int, clip: TimelineClip) -> None:
-        for bar in range(clip.start_bar, clip.end_bar + 1):
-            col = bar - 1
-            item = self.timeline_table.item(row, col)
-            if item is None:
-                continue
-            if bar == clip.start_bar:
-                item.setText(f"{clip.name} ({clip.clip_type})")
-            item.setToolTip(f"{clip.name} | {clip.clip_type} | bar {clip.start_bar}-{clip.end_bar}")
+            self._update_pitch_display(
+                track_id=self._current_track_id(),
+                bar=self._selected_timeline_bar,
+                clip_id=self.selected_clip_id,
+            )
 
     def _paint_playhead(self) -> None:
-        bar = int(round(self._timeline.playhead_bar))
-        bar = min(max(bar, 1), self._timeline.bars)
         self._refresh_playback_position_labels()
-        current_track_id = self._current_track_id()
-        for row, track in enumerate(self._timeline.tracks_in_order()):
-            selected_row = track.track_id == current_track_id
-            header_item = self.timeline_table.verticalHeaderItem(row)
-            if header_item is not None:
-                header_item.setBackground(QColor(41, 51, 64) if selected_row else QColor(32, 38, 47))
-                header_item.setForeground(QColor(231, 236, 244) if selected_row else QColor(154, 166, 181))
-            for col in range(self._timeline.bars):
-                item = self.timeline_table.item(row, col)
-                if item is None:
-                    continue
-                clip = self._find_clip_at(track.track_id, col + 1)
-                is_playhead = (col + 1) == bar
-                if clip is None:
-                    background = QColor(28, 32, 39) if selected_row else QColor(24, 28, 34)
-                    if is_playhead:
-                        background = QColor(58, 43, 34) if selected_row else QColor(48, 36, 29)
-                    item.setForeground(QColor(118, 128, 141))
-                    item.setText("")
-                else:
-                    if clip.clip_type == "midi":
-                        background = QColor(77, 143, 244) if clip.start_bar == col + 1 else QColor(63, 111, 186)
-                    else:
-                        background = QColor(217, 122, 54) if clip.start_bar == col + 1 else QColor(166, 90, 40)
-                    if selected_row:
-                        background = background.lighter(112)
-                    if is_playhead:
-                        background = background.lighter(118)
-                    item.setForeground(QColor(240, 244, 250))
-                item.setBackground(background)
-                font = item.font()
-                font.setBold(clip is not None and clip.start_bar == col + 1)
-                item.setFont(font)
+        self._transport_state.sync(
+            playhead_bar=self._timeline.playhead_bar,
+            total_bars=self._timeline.bars,
+            display_mode=self._current_display_mode(),
+            tempo_bpm=self._tempo_bpm,
+            beats_per_bar=self._beats_per_bar,
+        )
+        self._timeline_scene_model.sync(
+            tracks=self._timeline_scene_model.get_tracks(),
+            total_bars=self._timeline.bars,
+            content_end_bar=self._timeline.content_end_bar,
+            max_bars=self._timeline.max_bars,
+            playhead_bar=self._timeline.playhead_bar,
+            selected_track_id=self._current_track_id(),
+            selected_bar=self._selected_timeline_bar,
+            selected_clip_id=self.selected_clip_id or "",
+            zoom_level=self._workspace_layout.get_zoom_level(),
+            display_mode=self._current_display_mode(),
+            tempo_bpm=self._tempo_bpm,
+            beats_per_bar=self._beats_per_bar,
+            tool_mode=self.tool_mode,
+        )
         self._refresh_waveform_playhead()
 
     def _on_playhead_changed(self, value: int) -> None:
-        self._set_playhead_bar(value / 100.0, update_slider=False)
+        self._set_playhead_bar(value / 100.0)
 
     def _set_playhead_bar(self, bar: float, update_slider: bool = True) -> None:
         self._timeline.set_playhead_bar(bar)
-        playhead = self._timeline.playhead_bar
-        if update_slider:
-            slider_value = int(round(playhead * 100.0))
-            if self.playhead_slider.value() != slider_value:
-                self.playhead_slider.blockSignals(True)
-                self.playhead_slider.setValue(slider_value)
-                self.playhead_slider.blockSignals(False)
         self._paint_playhead()
 
     def _seconds_per_bar(self) -> float:
-        beats_per_second = self._tempo_bpm / 60.0
-        if beats_per_second <= 0:
-            return 2.0
-        return self._beats_per_bar / beats_per_second
+        return seconds_per_bar(self._tempo_bpm, self._beats_per_bar)
 
     def _seconds_to_bar(self, elapsed_sec: float) -> float:
-        return 1.0 + (max(elapsed_sec, 0.0) / self._seconds_per_bar())
+        return seconds_to_bar(elapsed_sec, self._tempo_bpm, self._beats_per_bar)
 
     def _bar_to_seconds(self, bar: float) -> float:
-        return max(bar - 1.0, 0.0) * self._seconds_per_bar()
+        return bar_to_seconds(bar, self._tempo_bpm, self._beats_per_bar)
 
     def _playhead_ratio_for_track(self, track_id: str) -> float:
         item = self._waveforms.get_item(track_id)
@@ -1334,14 +1701,46 @@ class IntegratedWindow(QMainWindow):
                 return clip
         return None
 
+    def _find_clip_by_id(self, clip_id: str | None) -> TimelineClip | None:
+        if not clip_id:
+            return None
+        return self._timeline.clips.get(clip_id)
+
+    def _find_clip_for_selection(self, track_id: str, bar: int, clip_id: str | None = None) -> TimelineClip | None:
+        selected = self._find_clip_by_id(clip_id)
+        if selected is not None:
+            return selected
+        return self._find_clip_at(track_id, bar)
+
     def _clip_note_names(self, clip: TimelineClip) -> list[str]:
         result: set[int] = set()
         for note in self._clip_note_events(clip):
             result.add(note["pitch"])
         return [midi_note_name(pitch) for pitch in sorted(result)]
 
-    def _update_pitch_display(self, track_id: str, bar: int) -> None:
-        clip = self._find_clip_at(track_id, bar)
+    def _ensure_editor_visible(self) -> None:
+        if self._workspace_layout.get_rack_collapsed():
+            self._apply_rack_collapsed_state(False)
+        self.utility_tabs.setCurrentWidget(self.editor_tab)
+        self.editor_scroll_area.ensureWidgetVisible(self.piano_roll_view)
+
+    def open_editor_for_selection(self, track_id: str, bar: int, clip_id: str | None = None) -> None:
+        self._selected_timeline_bar = min(max(int(bar), 1), self._timeline.bars)
+        clip = self._find_clip_for_selection(track_id, self._selected_timeline_bar, clip_id)
+        self.selected_clip_id = clip.clip_id if clip is not None else None
+        self.track_input.setText(track_id)
+        if hasattr(self, "compose_track_input"):
+            self.compose_track_input.setText(track_id)
+            self._refresh_compose_history()
+        self._ensure_editor_visible()
+        self._refresh_wav_info()
+        self._refresh_history()
+        self._refresh_timeline_view()
+        self.editor_scroll_area.ensureWidgetVisible(self.piano_roll_view)
+
+    def _update_pitch_display(self, track_id: str, bar: int, clip_id: str | None = None) -> None:
+        clip = self._find_clip_for_selection(track_id, bar, clip_id)
+        self.selected_clip_id = clip.clip_id if clip is not None else None
         raw = self._timeline.midi_clip_data.get(clip.clip_id, {}) if clip is not None else None
         if clip is None:
             self._clear_pitch_display()
@@ -1360,12 +1759,13 @@ class IntegratedWindow(QMainWindow):
             self._set_instrument_combo_program(program_raw if isinstance(program_raw, int) else None)
 
         note_events = self._clip_note_events(clip)
+        ticks_per_beat = int(raw.get("ticks_per_beat", 960)) if isinstance(raw, dict) else 960
+        bars = int(raw.get("bars", clip.length_bars)) if isinstance(raw, dict) else clip.length_bars
+        total_ticks = max(1, bars) * max(1, ticks_per_beat) * 4
         if note_events:
-            ticks_per_beat = int(raw.get("ticks_per_beat", 960)) if isinstance(raw, dict) else 960
-            bars = int(raw.get("bars", clip.length_bars)) if isinstance(raw, dict) else clip.length_bars
             total_ticks = max(
                 max(note["start_tick"] + note["length_tick"] for note in note_events),
-                max(1, bars) * max(1, ticks_per_beat) * 4,
+                total_ticks,
             )
             self._updating_roll_from_model = True
             try:
@@ -1385,7 +1785,7 @@ class IntegratedWindow(QMainWindow):
                 self._updating_roll_from_model = False
             self.piano_roll_view.set_editable(True, self._on_piano_roll_notes_changed)
         else:
-            self.piano_roll_view.clear()
+            self.piano_roll_view.set_notes([], total_ticks=total_ticks)
             self.piano_roll_view.set_editable(False, None)
 
         note_names = self._clip_note_names(clip)
@@ -1439,6 +1839,8 @@ class IntegratedWindow(QMainWindow):
                     item["channel"] = 9 if bool(raw.get("is_drum")) else 0
 
         self._timeline.midi_clip_data[clip.clip_id] = raw
+        self._update_pitch_display(track_id=clip.track_id, bar=clip.start_bar, clip_id=clip.clip_id)
+        self._refresh_timeline_view()
         self._set_status("ノートドラッグ編集を反映しました。")
 
     def _selected_midi_clip(self) -> tuple[TimelineClip, dict[str, object]] | None:
@@ -1476,7 +1878,7 @@ class IntegratedWindow(QMainWindow):
                 raw["program"] = int(program)
         self._timeline.midi_clip_data[clip.clip_id] = raw
         self.midi_transpose_spin.setValue(0)
-        self._update_pitch_display(track_id=clip.track_id, bar=clip.start_bar)
+        self._update_pitch_display(track_id=clip.track_id, bar=clip.start_bar, clip_id=clip.clip_id)
         self._set_status("MIDIクリップの音階/楽器変更を反映しました。")
 
     def _build_selected_midi_clip_draft(self) -> MidiClipDraft | None:
@@ -1547,32 +1949,118 @@ class IntegratedWindow(QMainWindow):
         self._set_status(f"選択MIDI試聴を開始しました: {rendered.name}")
 
     def _on_timeline_cell_clicked(self, row: int, column: int) -> None:
-        header = self.timeline_table.verticalHeaderItem(row)
-        if header is None:
+        tracks = self._timeline.tracks_in_order()
+        if row < 0 or row >= len(tracks):
             return
-        text = header.text()
-        if "(" not in text or not text.endswith(")"):
-            return
-        track_id = text[text.find("(") + 1 : -1]
-        self._selected_timeline_bar = column + 1
-        self.track_input.setText(track_id)
-        if hasattr(self, "compose_track_input"):
-            self.compose_track_input.setText(track_id)
-            self._refresh_compose_history()
-        self._refresh_wav_info()
-        self._refresh_history()
-        self._paint_playhead()
-        self._update_pitch_display(track_id=track_id, bar=column + 1)
+        self._on_arranger_selection_requested(tracks[row].track_id, column + 1, "")
+
+    def _on_transport_playhead_requested(self, bar: float) -> None:
+        self._set_playhead_bar(bar, update_slider=False)
+
+    def _prompt_arranger_instrument_choice(self) -> tuple[str, int | None, bool, str] | None:
+        if QInputDialog is object:
+            return ("ピアノ", 0, False, track_color_for_program(0))
+        items = arranger_instrument_options()
+        labels = [
+            f"{label} ({'Drum' if is_drum else f'Program {program}'})"
+            for label, program, is_drum in items
+        ]
+        selected_label, ok = QInputDialog.getItem(self, "新規トラックの楽器", "楽器", labels, 0, False)
+        if not ok or not selected_label:
+            return None
+        index = labels.index(selected_label)
+        instrument_name, program, is_drum = items[index]
+        return (
+            instrument_name,
+            program,
+            is_drum,
+            track_color_for_program(program, is_drum=is_drum),
+        )
+
+    def create_track_from_instrument(
+        self,
+        instrument_name: str,
+        program: int | None = None,
+        *,
+        is_drum: bool = False,
+        color: str | None = None,
+    ) -> TimelineTrack:
+        track_number = len(self._timeline.tracks) + 1
+        track = self._timeline.add_track(
+            name=f"{instrument_name} {track_number}",
+            instrument_name=instrument_name,
+            program=program,
+            is_drum=is_drum,
+            color=color or track_color_for_program(program, is_drum=is_drum),
+        )
+        return track
+
+    def create_clip_from_arranger_drag(
+        self,
+        track_id: str | None,
+        start_bar: int,
+        end_bar: int,
+        lane_index: int,
+    ) -> TimelineClip | None:
+        start = min(max(int(start_bar), 1), self._timeline.max_bars)
+        end = min(max(int(end_bar), start), self._timeline.max_bars)
+        target_track_id = track_id or ""
+        tracks = self._timeline.tracks_in_order()
+        if not target_track_id and 0 <= lane_index < len(tracks):
+            target_track_id = tracks[lane_index].track_id
+
+        if target_track_id in self._timeline.tracks:
+            track = self._timeline.tracks[target_track_id]
+        else:
+            self.pending_track_creation_from_pencil = (start, end, lane_index)
+            choice = self._prompt_arranger_instrument_choice()
+            self.pending_track_creation_from_pencil = None
+            if choice is None:
+                return None
+            instrument_name, program, is_drum, color = choice
+            track = self.create_track_from_instrument(
+                instrument_name,
+                program,
+                is_drum=is_drum,
+                color=color,
+            )
+            target_track_id = track.track_id
+
+        track_clips = self._timeline.clips_for_track(target_track_id)
+        clip_name = f"{track.instrument_name} Clip {len(track_clips) + 1}"
+        midi_data = {
+            "name": clip_name,
+            "bars": end - start + 1,
+            "grid": "1/16",
+            "notes": [],
+            "program": None if track.is_drum else track.program,
+            "is_drum": track.is_drum,
+            "ticks_per_beat": 960,
+        }
+        clip = self._timeline.add_clip(
+            target_track_id,
+            "midi",
+            start_bar=start,
+            length_bars=end - start + 1,
+            name=clip_name,
+            midi_data=midi_data,
+        )
+        self.open_editor_for_selection(target_track_id, clip.start_bar, clip.clip_id)
+        self._set_status(f"アレンジャーにMIDIクリップを追加しました: {clip.name}")
+        return clip
+
+    def _on_arranger_selection_requested(self, track_id: str, bar: int, clip_id: str = "") -> None:
+        self.open_editor_for_selection(track_id, bar, clip_id or None)
         self._set_status(f"選択トラックを {track_id} に変更しました。")
 
+    def _on_arranger_clip_creation_requested(self, track_id: str, start_bar: int, end_bar: int, lane_index: int) -> None:
+        clip = self.create_clip_from_arranger_drag(track_id or None, start_bar, end_bar, lane_index)
+        if clip is None:
+            self._set_status("クリップ作成をキャンセルしました。")
+
     def _on_add_track(self) -> None:
-        track = self._timeline.add_track(name=f"Track {len(self._timeline.tracks)}")
-        self.track_input.setText(track.track_id)
-        if hasattr(self, "compose_track_input"):
-            self.compose_track_input.setText(track.track_id)
-            self._refresh_compose_history()
-        self._refresh_timeline_view()
-        self._refresh_wav_info()
+        track = self.create_track_from_instrument("ピアノ", 0)
+        self.open_editor_for_selection(track.track_id, 1)
         self._set_status(f"トラックを追加しました: {track.track_id}")
 
     def _on_add_clip(self, clip_type: str) -> None:
@@ -1580,15 +2068,34 @@ class IntegratedWindow(QMainWindow):
         if track_id not in self._timeline.tracks:
             self._show_error(f"トラックID '{track_id}' はタイムラインに存在しません。")
             return
+        track = self._timeline.tracks[track_id]
         track_clips = self._timeline.clips_for_track(track_id)
-        start_bar = 1 if not track_clips else min(track_clips[-1].end_bar + 1, self._timeline.bars)
+        start_bar = 1 if not track_clips else track_clips[-1].end_bar + 1
         length = 4 if clip_type == "midi" else 8
-        if start_bar + length - 1 > self._timeline.bars:
-            self._show_error("これ以上クリップを配置できません。")
+        if start_bar + length - 1 > self._timeline.max_bars:
+            self._show_error("1000小節を超えるため、これ以上クリップを配置できません。")
             return
         name = f"{'MIDI' if clip_type == 'midi' else 'Audio'} Clip {len(track_clips) + 1}"
-        self._timeline.add_clip(track_id, clip_type, start_bar=start_bar, length_bars=length, name=name)
-        self._refresh_timeline_view()
+        midi_data = None
+        if clip_type == "midi":
+            midi_data = {
+                "name": name,
+                "bars": length,
+                "grid": "1/16",
+                "notes": [],
+                "program": None if track.is_drum else track.program,
+                "is_drum": track.is_drum,
+                "ticks_per_beat": 960,
+            }
+        clip = self._timeline.add_clip(
+            track_id,
+            clip_type,
+            start_bar=start_bar,
+            length_bars=length,
+            name=name,
+            midi_data=midi_data,
+        )
+        self.open_editor_for_selection(track_id, start_bar, clip.clip_id)
         self._set_status(f"{clip_type.upper()} クリップを追加しました。")
 
     def _on_load_wav(self) -> None:
@@ -1609,21 +2116,20 @@ class IntegratedWindow(QMainWindow):
             return
 
         self._clear_preview_render(track_id)
-        self._add_audio_clip_from_wave(track_id, Path(file_path).stem, info.duration_sec)
-        self._refresh_timeline_view()
-        self._refresh_wav_info()
+        clip = self._add_audio_clip_from_wave(track_id, Path(file_path).stem, info.duration_sec)
+        self.open_editor_for_selection(track_id, clip.start_bar, clip.clip_id)
         self._set_status(
             f"WAVを読込しました: {Path(file_path).name} "
             f"({info.sample_rate}Hz, {info.duration_sec:.2f}s)"
         )
 
-    def _add_audio_clip_from_wave(self, track_id: str, name: str, duration_sec: float) -> None:
-        bars = max(1, math.ceil(duration_sec / 2.0))  # 120BPM, 4/4 を仮定
+    def _add_audio_clip_from_wave(self, track_id: str, name: str, duration_sec: float) -> TimelineClip:
+        bars = max(1, math.ceil(duration_sec / self._seconds_per_bar()))
         track_clips = self._timeline.clips_for_track(track_id)
-        start_bar = 1 if not track_clips else min(track_clips[-1].end_bar + 1, self._timeline.bars)
-        if start_bar + bars - 1 > self._timeline.bars:
-            bars = max(1, self._timeline.bars - start_bar + 1)
-        self._timeline.add_clip(track_id, "audio", start_bar=start_bar, length_bars=bars, name=name)
+        start_bar = 1 if not track_clips else track_clips[-1].end_bar + 1
+        if start_bar + bars - 1 > self._timeline.max_bars:
+            bars = max(1, self._timeline.max_bars - start_bar + 1)
+        return self._timeline.add_clip(track_id, "audio", start_bar=start_bar, length_bars=bars, name=name)
 
     def _on_play_wav(self) -> None:
         track_id = self._current_track_id()
@@ -2032,14 +2538,8 @@ class IntegratedWindow(QMainWindow):
             first_clip_id = clip_ids[0]
             inserted = self._timeline.clips.get(first_clip_id)
             if inserted is not None:
-                self._selected_timeline_bar = inserted.start_bar
-                self.track_input.setText(inserted.track_id)
-                if hasattr(self, "compose_track_input"):
-                    self.compose_track_input.setText(inserted.track_id)
-                self._update_pitch_display(track_id=inserted.track_id, bar=inserted.start_bar)
+                self.open_editor_for_selection(inserted.track_id, inserted.start_bar, first_clip_id)
                 self.inspector_tabs.setCurrentIndex(0)
-                self._paint_playhead()
-        self.utility_tabs.setCurrentWidget(self.compose_history_tab)
         self._set_status(
             f"作曲クリップを{len(clip_ids)}件挿入しました（bar {phrase_start}-{phrase_end}）。"
             f"コマンドID={command_id}"

@@ -161,3 +161,30 @@ def test_apply_to_timeline_phrase_partial_apply() -> None:
     assert inserted_clip.length_bars == 2
     assert inserted_midi["bars"] == 2
     assert inserted_midi["name"].endswith("[bar 3-4]")
+
+
+def test_apply_to_timeline_creates_track_with_instrument_metadata() -> None:
+    timeline = TimelineState(bars=32)
+    service = CompositionService(timeline=timeline, engine_mode="rule-based")
+
+    suggestions = service.suggest(
+        request=ComposeRequest(
+            track_id="track-compose",
+            part="drum",
+            key="C",
+            scale="major",
+            bars=2,
+            style="hiphop",
+            grid="1/16",
+            program=None,
+        )
+    )
+
+    _, clip_ids = service.apply_to_timeline(suggestions[0].suggestion_id)
+
+    assert clip_ids
+    track = timeline.tracks["track-compose"]
+    assert track.instrument_name == "Drums"
+    assert track.program is None
+    assert track.is_drum is True
+    assert track.color == "#FF8A4C"
